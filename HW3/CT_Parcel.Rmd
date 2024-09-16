@@ -1,12 +1,12 @@
 ---
 title: "CT Parcel Geospatial Data"
 author: "David Lieberman"
-output: html_notebook
+output:
+html_notebook: default
 ---
 
 
 ```{r setup, include=FALSE}
-library(here)
 library(sf)
 library(tigris)
 library(reticulate)
@@ -24,6 +24,7 @@ options(tigris_year = 2023)
 ```{r}
 # dg <- st_read('https://services3.arcgis.com/3FL1kr7L4LvwA2Kb/arcgis/rest/services/Connecticut_State_Parcel_Layer_2023/FeatureServer/0/query?outFields=*&where=1%3D1&f=geojson')
 dg <- readRDS("dg.rds")
+dg <- st_make_valid(dg)
 dg <- dplyr::filter(dg, !st_is_empty(dg))
 
 # Visvalingam’s algorithm for decimating vertices
@@ -46,7 +47,7 @@ dg_water <- st_read(subprocess$check_output("overturemaps download --bbox=-73.72
 
 ```{r}
 dg_waterfront <- st_intersection(subset(dg_water, subtype == "ocean"), CT) |> st_cast("MULTIPOLYGON")
-property_waterfront = st_filter(dg, st_buffer(dg_waterfront, dist = 50))
+property_waterfront <- st_filter(dg, st_buffer(dg_waterfront, dist = 50))
 
 g <- ggplot() +
    geom_sf(data = dg_zip) +
