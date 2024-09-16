@@ -50,7 +50,7 @@ property_waterfront = st_filter(dg, st_buffer(dg_waterfront, dist = 50))
 
 g <- ggplot() +
    geom_sf(data = dg_zip) +
-   geom_sf(data = property_waterfront) +
+   geom_sf(data = property_waterfront, color = "red") +
    geom_sf(data = dg_waterfront, color = "blue") +
    theme_bw()
 p <- ggplotly(g)
