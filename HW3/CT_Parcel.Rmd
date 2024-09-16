@@ -1,0 +1,58 @@
+---
+title: "CT Parcel Geospatial Data"
+author: "David Lieberman"
+output: html_notebook
+---
+
+
+```{r setup, include=FALSE}
+library(here)
+library(sf)
+library(tigris)
+library(reticulate)
+library(ggplot2)
+library(plotly)
+
+here::i_am(".git/config")
+knitr::opts_chunk$set("root.dir" = here::here("HW3"))
+
+options(tigris_use_cache = TRUE)
+options(tigris_year = 2023)
+```
+
+
+```{r}
+# dg <- st_read('https://services3.arcgis.com/3FL1kr7L4LvwA2Kb/arcgis/rest/services/Connecticut_State_Parcel_Layer_2023/FeatureServer/0/query?outFields=*&where=1%3D1&f=geojson')
+dg <- readRDS("dg.rds")
+dg <- dplyr::filter(dg, !st_is_empty(dg))
+
+# Visvalingam’s algorithm for decimating vertices
+# dg <- rmapshaper::ms_simplify(dg, keep = 0.001, keep_shapes = FALSE)
+```
+
+```{r}
+CT <- filter_state(states(), state = "Connecticut") |> st_transform(crs = 4326)
+dg_zip <- zctas(cb = TRUE, year = 2020, filter_by = CT, starts_with = "06") |> st_transform(crs = 4326)
+st_bbox(CT) #-73.72777,40.95094,-71.78724,42.05051 
+```
+
+```{r}
+# conda_install("overturemaps", forge = TRUE)
+subprocess <- import("subprocess")
+dg_water <- st_read(subprocess$check_output("overturemaps download --bbox=-73.72777,40.95094,-71.78724,42.05051 -f geojson -t water", stderr = subprocess$DEVNULL))
+
+# dg_buildings <- st_read(subprocess$check_output("overturemaps download --bbox=-73.72777,40.95094,-71.78724,42.05051 -f geojson -t building", stderr = subprocess$DEVNULL))
+```
+
+```{r}
+dg_waterfront <- st_intersection(subset(dg_water, subtype == "ocean"), CT) |> st_cast("MULTIPOLYGON")
+property_waterfront = st_filter(dg, st_buffer(dg_waterfront, dist = 50))
+
+g <- ggplot() +
+   geom_sf(data = dg_zip) +
+   geom_sf(data = property_waterfront) +
+   geom_sf(data = dg_waterfront, color = "blue") +
+   theme_bw()
+p <- ggplotly(g)
+htmlwidgets::saveWidget(toWebGL(p), "waterfront_houses_CT.html", selfcontained = TRUE)
+```
