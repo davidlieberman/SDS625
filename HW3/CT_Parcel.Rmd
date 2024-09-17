@@ -24,7 +24,7 @@ options(tigris_year = 2023)
 ```{r}
 # dg <- st_read('https://services3.arcgis.com/3FL1kr7L4LvwA2Kb/arcgis/rest/services/Connecticut_State_Parcel_Layer_2023/FeatureServer/0/query?outFields=*&where=1%3D1&f=geojson')
 dg <- readRDS("dg.rds")
-dg <- st_make_valid(dg)
+dg <- st_make_valid(dg) |> st_cast("MULTIPOLYGON")
 dg <- dplyr::filter(dg, !st_is_empty(dg))
 
 # Visvalingam’s algorithm for decimating vertices
@@ -46,13 +46,14 @@ dg_water <- st_read(subprocess$check_output("overturemaps download --bbox=-73.72
 ```
 
 ```{r}
-dg_waterfront <- st_intersection(subset(dg_water, subtype == "ocean"), CT) |> st_cast("MULTIPOLYGON")
-property_waterfront <- st_filter(dg, st_buffer(dg_waterfront, dist = 50))
+dg_waterfront <- st_intersection(subset(dg_water, subtype == "ocean"), CT) |> st_cast("MULTIPOLYGON") |> st_boundary()
+dg_waterfront_buffer <- dg_waterfront |> st_transform(crs = 3488) |> st_buffer(dist = 25) |> st_transform(crs = 4326)
+property_waterfront <- st_filter(dg, dg_waterfront_buffer, .predicate = st_within)
 
 g <- ggplot() +
-   geom_sf(data = dg_zip) +
-   geom_sf(data = property_waterfront, color = "red") +
-   geom_sf(data = dg_waterfront, color = "blue") +
+   geom_sf(data = dg_zip["geometry"]) +
+   geom_sf(data = dg_waterfront["geometry"], color = "blue") +
+   geom_sf(data = property_waterfront["geometry"], color = "red") +
    theme_bw()
 p <- ggplotly(g)
 htmlwidgets::saveWidget(toWebGL(p), "waterfront_houses_CT.html", selfcontained = TRUE)
