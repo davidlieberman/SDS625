@@ -15,21 +15,27 @@ library(plotly)
 
 here::i_am(".git/config")
 knitr::opts_chunk$set("root.dir" = here::here("HW3"))
+knitr::opts_chunk$set(eval = FALSE)
 
 options(tigris_use_cache = TRUE)
 options(tigris_year = 2023)
 ```
 
-
+Read in the latest CT Real Estate data from the ArcGIS API where it is maintained
 ```{r}
-# dg <- st_read('https://services3.arcgis.com/3FL1kr7L4LvwA2Kb/arcgis/rest/services/Connecticut_State_Parcel_Layer_2023/FeatureServer/0/query?outFields=*&where=1%3D1&f=geojson')
-dg <- readRDS("dg.rds")
+dg <- st_read('https://services3.arcgis.com/3FL1kr7L4LvwA2Kb/arcgis/rest/services/Connecticut_State_Parcel_Layer_2023/FeatureServer/0/query?outFields=*&where=1%3D1&f=geojson')
+# dg <- readRDS("dg.rds")
+
+# Some minor corrections for broken geometries and dropping entries missing geometry
 dg <- st_make_valid(dg) |> st_cast("MULTIPOLYGON")
 dg <- dplyr::filter(dg, !st_is_empty(dg))
+```
 
-# Visvalingam’s algorithm for decimating vertices
+For complex geometries, it can be important to reduce the vertex count. Visvalingam’s algorithm for decimating vertices
+```{r}
 # dg <- rmapshaper::ms_simplify(dg, keep = 0.001, keep_shapes = FALSE)
 ```
+
 
 ```{r}
 CT <- filter_state(states(), state = "Connecticut") |> st_transform(crs = 4326)
