@@ -1,1 +1,2 @@
 dg.rds filter=lfs diff=lfs merge=lfs -text
+data/crime_dg.geojson filter=lfs diff=lfs merge=lfs -text
