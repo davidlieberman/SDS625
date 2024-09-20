@@ -1,5 +1,5 @@
 ---
-title: "R Notebook"
+title: "CT Parcel Crime Analysis"
 output:
   html_document:
     df_print: paged
@@ -11,15 +11,10 @@ library(ggplot2)
 library(plotly)
 library(sf)
 library(tigris)
-library(maps)
 library(data.table)
-library(collapse)
-library(compiler)
-library(knitr)
-library(reticulate)
 
-# here::i_am(".git/config")
-# knitr::opts_chunk$set("root.dir" = here::here("HW3"))
+here::i_am(".git/config")
+knitr::opts_chunk$set("root.dir" = here::here("HW3"))
 # knitr::opts_chunk$set(eval = FALSE)
 knitr::opts_chunk$set(message = FALSE)
 setDTthreads(threads = 0)
@@ -30,28 +25,46 @@ options(tigris_year = 2021)
 
 Get crime data from ArcGIS API and remove (4) entries with missing geometry; write cleaned data to GeoJSON
 ```{r, eval = FALSE}
-crime_dg <- st_read('https://utility.arcgis.com/usrsvcs/servers/3adad6320b7a421bb3826ec8871e2b66/rest/services/OpenData_PublicSafety/MapServer/2/query?outFields=*&where=1%3D1&f=geojson')
-crime_dg <- dplyr::filter(crime_dg, !st_is_empty(crime_dg))
-st_write(crime_dg, "data\crime_dg.geojson")
+# crime_dg <- st_read("https://utility.arcgis.com/usrsvcs/servers/3adad6320b7a421bb3826ec8871e2b66/rest/services/OpenData_PublicSafety/MapServer/2/query?outFields=*&where=1%3D1&f=geojson")
+# crime_dg$Date <- as.Date(fread(".//data//crime_dg.csv")$Date, "%Y/%m/%d")
+# crime_dg <- crime_dg[!st_is_empty(crime_dg),]
+# st_write(crime_dg, ".//data//crime_dg.geojson")
 ```
 
 Read in data
 ```{r}
-crime_dg <- st_read("data//crime_dg.geojson")
-parcel_dg <- st_read("data//parcel_hartford.geojson")
+crime_dg <- st_read(".//data//crime_dg.geojson")
+parcel_dg <- st_read(".//data//parcel_hartford.geojson")
 ```
 
 Census tracts from Tigris for map baselayer
 ```{r}
-hartford_tracts <- tracts(state = "CT", county = "Hartford", cb = TRUE) |> st_transform(crs = 4326)
+hartford_tracts <- tracts(state = "CT", cb = TRUE, filter_by = subset(county_subdivisions(state = "CT"), NAME == "Hartford")) |>
+   st_transform(crs = st_crs(crime_dg))
+
+# hartford_tracts <- tracts(state = "CT", cb = TRUE, filter_by = st_bbox(st_transform(crime_dg, crs = "NAD83"))) |>
+   # st_transform(crs = st_crs(crime_dg))
 ```
 
 plot
 ```{r, warning = FALSE}
-g = ggplot() +
-   geom_sf(data = tracts(state = 09, year = 2023, filter_by = subset(county_subdivisions(state = 09), NAME == "Hartford"))) +
+ggplot(crime_dg) +
+   geom_sf(data = hartford_tracts) +
+   geom_hex(aes(X,Y), data = ~cbind(.x, st_coordinates(.x))) +
+   labs(x = "Latitude", y = "Longitude") +
    theme_bw()
-
-toWebGL(ggplotly(g))
 ```
 
+```{r, warning = FALSE}
+g <- ggplot(dplyr::sample_n(crime_dg, 1e3)) +
+   geom_sf(data = hartford_tracts) +
+   geom_sf(data = dplyr::sample_n(parcel_dg, 1e3)) +
+   geom_density_2d(aes(X,Y), data = ~cbind(.x, st_coordinates(.x))) +
+   stat_sf_coordinates(size = 0.1, color = "red") +
+   labs(x = "Latitude", y = "Longitude") +
+   theme_bw()
+
+p <- toWebGL(ggplotly(g))
+p$x$data[[4]]$hoverinfo <- "none"
+p
+```
