@@ -1,0 +1,57 @@
+---
+title: "R Notebook"
+output:
+  html_document:
+    df_print: paged
+---
+
+
+```{r setup, include=FALSE}
+library(ggplot2)
+library(plotly)
+library(sf)
+library(tigris)
+library(maps)
+library(data.table)
+library(collapse)
+library(compiler)
+library(knitr)
+library(reticulate)
+
+# here::i_am(".git/config")
+# knitr::opts_chunk$set("root.dir" = here::here("HW3"))
+# knitr::opts_chunk$set(eval = FALSE)
+knitr::opts_chunk$set(message = FALSE)
+setDTthreads(threads = 0)
+
+options(tigris_use_cache = TRUE)
+options(tigris_year = 2021)
+```
+
+Get crime data from ArcGIS API and remove (4) entries with missing geometry; write cleaned data to GeoJSON
+```{r, eval = FALSE}
+crime_dg <- st_read('https://utility.arcgis.com/usrsvcs/servers/3adad6320b7a421bb3826ec8871e2b66/rest/services/OpenData_PublicSafety/MapServer/2/query?outFields=*&where=1%3D1&f=geojson')
+crime_dg <- dplyr::filter(crime_dg, !st_is_empty(crime_dg))
+st_write(crime_dg, "data\crime_dg.geojson")
+```
+
+Read in data
+```{r}
+crime_dg <- st_read("data//crime_dg.geojson")
+parcel_dg <- st_read("data//parcel_hartford.geojson")
+```
+
+Census tracts from Tigris for map baselayer
+```{r}
+hartford_tracts <- tracts(state = "CT", county = "Hartford", cb = TRUE) |> st_transform(crs = 4326)
+```
+
+plot
+```{r, warning = FALSE}
+g = ggplot() +
+   geom_sf(data = tracts(state = 09, year = 2023, filter_by = subset(county_subdivisions(state = 09), NAME == "Hartford"))) +
+   theme_bw()
+
+toWebGL(ggplotly(g))
+```
+
