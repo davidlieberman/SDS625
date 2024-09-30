@@ -74,3 +74,36 @@ p <- toWebGL(ggplotly(g))
 p$x$data[[4]]$hoverinfo <- "none"
 p
 ```
+
+
+
+
+
+
+# binning
+
+```{r}
+# get centroid of each parcel. add centroids to parcel_dg
+
+centroids <- st_centroid(parcel_dg)
+coords <- st_coordinates(centroids)
+parcel_dg$centroid.x <- coords[, 'X']
+parcel_dg$centroid.y <- coords[, 'Y']
+
+head(parcel_dg)
+
+
+stealin <- crime_dg[grep(
+  "ROBBERY|BURGLARY|LARCENY",
+  crime_dg$UCR_1_Category), 
+]
+
+parcel_dg$thefts <- sapply(st_is_within_distance(parcel_dg, stealin, 0.1), 
+                           length)
+
+
+```
+
+# KDE
+
+
