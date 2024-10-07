@@ -1,0 +1,205 @@
+---
+title: "9-25-2024 Methods"
+author: "Lisa Lin"
+date: "2024-09-25"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r setup, include=FALSE}
+library(ggplot2)
+library(plotly)
+library(sf)
+library(tigris)
+library(data.table)
+
+# here::i_am(".git/config")
+# knitr::opts_chunk$set("root.dir" = here::here("HW3"))
+# knitr::opts_chunk$set(eval = FALSE)
+knitr::opts_chunk$set(message = FALSE)
+setDTthreads(threads = 0)
+
+options(tigris_use_cache = TRUE)
+options(tigris_year = 2021)
+```
+
+## Data Processing
+
+```{r, eval = FALSE}
+# Get crime data from ArcGIS API and remove (4) entries with missing geometry
+# Write cleaned data to GeoJSON file
+# crime_dg <- st_read("https://utility.arcgis.com/usrsvcs/servers/3adad6320b7a421bb3826ec8871e2b66/rest/services/OpenData_PublicSafety/MapServer/2/query?outFields=*&where=1%3D1&f=geojson")
+# crime_dg$Date <- as.Date(fread(".//data//crime_dg.csv")$Date, "%Y/%m/%d")
+# crime_dg <- crime_dg[!st_is_empty(crime_dg),]
+# st_write(crime_dg, ".//data//crime_dg.geojson")
+
+# Read in Hartford crime and parcel data
+# c <- st_read(".//data//crime_dg.geojson")
+# p <- st_read(".//data//parcel_hartford.geojson")
+
+# Filter parcels for single family homes only
+# Entire apartment or residential complexes are bought less frequently 
+# and are more complicated to appraise.
+# resid_labels <- c("ONE FAMILY") #, "TWO FAMILY", "THREE FAMILY")
+# pr <- p[p$State_Use_Description %in% resid_labels, ]
+
+# Filter crimes from 2016-2021
+# Property appraisal was made in 2021.
+# Assume that about 5 years of crime data is sufficient to capture the effect
+# of crime on property values if any effect exists.
+# cc <- c[as.Date(c$Date) >= as.Date("2016-01-01") & 
+#           as.Date(c$Date) <= as.Date("2021-12-31"),]
+
+# Save filtered data
+# st_write(pr, ".//data//parcel_hartford_single_family.geojson")
+# st_write(cc, ".//data//crime_hartford_2016_2021.geojson")
+```
+
+```{r}
+# Read in filtered Hartford crime and parcel data
+c <- st_read(".//data//crime_hartford_2016_2021.geojson")
+p <- st_read(".//data//parcel_hartford_single_family.geojson")
+
+# Get polygons for Hartford's census tracts
+hartford_tracts <- st_filter(tracts(state = "CT"),
+                             subset(county_subdivisions(state = "CT"), 
+                                    NAMELSAD == "Hartford town"),
+                             .predicate = st_within) |>
+   st_transform(crs = st_crs(c))
+
+# Get polygons for Hartford's bodies of water 
+water <- st_intersection(
+  st_transform(area_water("CT", "Hartford"), crs = st_crs(hartford_tracts)), 
+  hartford_tracts)
+
+# Get crime rate by census tract
+
+```
+
+
+## Data Exploration
+
+```{r}
+# For each census tract, get average property value in 2021 and 
+# average annual crime count 
+# Create a new dataframe
+library(dplyr)
+# Add a column for year
+c <- c %>%
+  mutate(year = year(as.Date(Date)))
+# Drop geometry data 
+cc <- sf::st_drop_geometry(c)
+# Calculate total crimes per year
+crimes_per_year <- table(cc$year)
+
+
+select(year) %>%
+  group_by(year) %>%
+  summarise(total_crime_per_yr = n())
+
+
+# Plot map with census tracts where size of dot represents log property value
+# and color represents log crime count
+
+
+```
+
+
+```{r, warning = FALSE}
+
+
+
+# Plot log of total crime counts binned by area
+l1 = leaflet(d) %>%
+  
+  addProviderTiles('CartoDB.Positron') %>%
+  
+  ## census tracts
+  addPolygons(fillColor = ~pal1(rescaled.house.value), 
+              label = ~label %>% lapply(htmltools::HTML), 
+              weight = 0.5,
+              color = 'black',
+              fillOpacity = 0.8) %>%
+  
+  # stops
+  addCircleMarkers(data = ds,
+                   lng = ~stop1_lon,
+                   lat = ~stop1_lat,
+                   label = ~label %>% lapply(htmltools::HTML),
+                   color = pubred,
+                   radius = ~log(`n_to_Grand Central` + `n_to_New Haven`)) %>%
+  
+  setView(lng = -73.3, 
+          lat = 41.21979, 
+          zoom = 10) %>%
+  
+  addTiles()
+```
+
+
+```{r, warning = FALSE}
+# Plot sample of crimes and parcels
+
+# library(mapview)
+# mapview(dplyr::sample_n(c, 1e3), dplyr::sample_n(p, 1e3))
+
+g <- ggplot(dplyr::sample_n(c, 1e3)) +
+   geom_sf(data = hartford_tracts) +
+   geom_sf(data = dplyr::sample_n(p, 1e3)) +
+   geom_density_2d(aes(X,Y), data = ~cbind(.x, st_coordinates(.x))) +
+   stat_sf_coordinates(size = 0.1, color = "red") +
+   labs(x = "Latitude", y = "Longitude") +
+   theme_bw()
+
+p <- toWebGL(ggplotly(g))
+p$x$data[[4]]$hoverinfo <- "none"
+p
+```
+
+```{r}
+# Plot average residential parcel value by census tract 
+# with crime counts binned by area
+
+# Map parcel address to 
+
+
+# Get average residential parcel value by census tract
+parcel_dg$Zone
+
+hartford_tracts
+
+parcel_dg$avg_residential_value <- parcel_dg$AV_LAND / parcel_dg$AV_TOTAL
+```
+
+
+
+
+## References
+
+Spatial regression 
+
+https://oerstatistics.wordpress.com/wp-content/uploads/2016/03/intro_to_r.pdf#page=68.08
+
+https://crd230.github.io/lab8.html
+
+Kernel density estimation
+
+https://seeing-statistics.com/issue4/
+
+
+
+
+## Analysis
+
+### Vanilla OLS regression
+
+For our baseline model, we assume no spatial correlation in the crime and 
+property data. 
+
+$$
+
+$$

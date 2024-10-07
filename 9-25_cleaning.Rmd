@@ -1,0 +1,135 @@
+---
+title: "House Prices"
+author: "Lisa Lin"
+date: "2024-09-18"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+## Filter property data to Hartford only
+
+```{r}
+# Property data
+
+# Load the csv data
+df1 <- read.csv('CT-parcel-data/Connecticut_State_Parcel_Layer_2023_-3653519729566038598.csv')
+head(df1, 2)
+
+# Filter by Town.Name
+dfh <- df1[df1$Town.Name == 'HARTFORD', ]
+head(dfh, 2)
+
+# Print the number of properties in each city. New Haven has more!
+nrow(dfh)
+
+# Save the filtered data
+write.csv(dfh, 'CT-parcel-data/Hartford_Parcel_Data.csv')
+```
+
+
+```{r}
+# Shape data
+
+
+# Load the gdb that should contain the same data frame, in theory,
+# along with the boundary data (which the CSV doesn't have).  That's why
+# Brian chose `dg` where the `g` is for geometry.
+dg <- st_read("CT-parcel-data/4c5501b8-b68e-4888-bf6a-d92670d69c3b.gdb/")
+is(dg)         # This is a shapefile, I guess.  Lots of polygons!
+head(dg, 2)    # Contains data in a table-like format...
+head(dg$SHAPE) # ...but with a weird "SHAPE" column at the end
+
+# CRS stands for Coordinate Reference System.  Credit to Brian here.
+# Let's convert to lat/long in degrees:
+dg <- st_transform(dg, crs = 4326)
+head(dg, 2)
+head(dg$SHAPE, 2) # Now in degrees lat/lon, good.
+```
+
+
+```{r}
+# Load the filtered data
+# dfh <- read.csv('CT-parcel-data/Hartford_Parcel_Data.csv')
+# head(dfh, 2)
+```
+
+
+```{r}
+# Explore the property use descriptions
+# sort(table(dfh$State.Use.Description), decreasing = TRUE)
+
+# Residential property types in Hartford
+# h_res <- c("ONE FAMILY", "TWO FAMILY", "THREE FAMILY", "APARTMENT")
+```
+
+```{r}
+# dfh$Owner[dfh$State.Use.Description == "RES/COMM"]
+```
+
+
+```{r}
+sort(table(dfn$State.Use.Description), decreasing = TRUE)
+
+# Create New Haven property labels based on property usage
+nl <- list("residential" = c("Single Family", "Two Family", "Three Family", "Condominium"),
+           "commercial" = c("MIXED USE  MDL-94"),
+           "police" = c(""))
+nl_res <- c("Single Family", "Two Family", "Three Family", "Condominium", "MIXED USE  MDL-94")
+```
+
+
+
+```{r setup}
+library(censusxy)
+library(stringr)
+library(ggplot2)
+library(sf)
+library(maps)
+library(data.table)
+library(collapse)
+library(compiler)
+library(knitr)
+library(here)
+
+# here::i_am(".git/config")
+# knitr::opts_knit$set("root.dir" = here::here("data_aggregate"))
+# data = readRDS("POI_ArcGIS_data.rds")
+setDTthreads(threads = 0)
+```
+
+```{r}
+# Geocode our POI data by fuzzy-matching the addresses via the Census API which yields clean, standardized outputs (whenever a match exists)
+N = nrow(data)
+geocode_optimized = cmpfun(function(DT, threads){
+  Reduce(merge, Map(\(class, output, return, vintage)
+                    DT[, cxy_geocode(.SD,
+                                     id = "idx",
+                                     street = "street_address",
+                                     city = "city",
+                                     state = "state",
+                                     zip = "zip",
+                                     class = class,
+                                     output = output,
+                                     return = return,
+                                     vintage = vintage,
+                                     parallel = threads)] |> na.omit(),
+                    class = c("dataframe", "sf"),
+                    output = c("full", "simple"),
+                    return = c("geographies", "locations"),
+                    vintage = c(4, NULL)))
+})
+```
+
+
+
+
+
+
+
+
+
+
