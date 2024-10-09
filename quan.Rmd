@@ -135,6 +135,52 @@ unique(sfh$Condition_Description)
 
 ```
 
-# KDE
+# 2024-10-09
 
+```{r}
+
+parcels <- st_read(".//data//parcel_hartford.geojson")
+crime <- st_read(".//data//crime_hartford_2016_2021.geojson")
+
+```
+
+```{r}
+stealin <- crime_dg[grep(
+  "ROBBERY|BURGLARY|LARCENY",
+  crime_dg$UCR_1_Category), 
+]
+hurtin <- crime_dg[grep(
+  "ASSAULT|HOMICIDE|SHOOTING",
+  crime_dg$UCR_1_Category), 
+]
+
+
+parcels$thefts <- sapply(st_is_within_distance(
+  parcels, stealin, dist = units::set_units(0.1, "miles")
+), length)
+parcels$owie <- sapply(st_is_within_distance(
+  parcels, hurtin, dist = units::set_units(0.1, "miles")
+), length)
+
+sfh <- parcels[parcels$State_Use_Description == "ONE FAMILY",]
+
+sfh$Condition_Description <- ordered(
+  sfh$Condition_Description, 
+  levels=c("Dilapidated", "Very Poor", "Poor", "Fair", 
+           "Fair-Avg", "Average", "Avg-Good", "Good", 
+           "Good-VG", "Very Good", "Excellent"))
+```
+
+
+```{r}
+model <- lm(log(Assessed_Total) ~ thefts 
+            + owie
+            + sqrt(Living_Area)
+            + AYB
+            + Condition_Description, data = sfh)
+summary(model)
+
+unique(sfh$Condition_Description)
+
+```
 
