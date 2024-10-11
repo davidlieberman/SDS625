@@ -16,11 +16,13 @@ library(plotly)
 library(sf)
 library(tigris)
 library(data.table)
+library(dplyr)
+library(tidyr)
 
 # here::i_am(".git/config")
 # knitr::opts_chunk$set("root.dir" = here::here("HW3"))
 # knitr::opts_chunk$set(eval = FALSE)
-knitr::opts_chunk$set(message = FALSE)
+# knitr::opts_chunk$set(message = FALSE)
 setDTthreads(threads = 0)
 
 options(tigris_use_cache = TRUE)
@@ -60,9 +62,10 @@ options(tigris_year = 2021)
 ```
 
 ```{r}
-# Read in filtered Hartford crime and parcel data
+# Read in filtered Hartford crime, parcel, and population data
 c <- st_read(".//data//crime_hartford_2016_2021.geojson")
 p <- st_read(".//data//parcel_hartford_single_family.geojson")
+pop <- read.csv(".//data//population_by_tract.csv", skip = 3, header = T)[,1:3]
 
 # Get polygons for Hartford's census tracts
 hartford_tracts <- st_filter(tracts(state = "CT"),
@@ -76,8 +79,78 @@ water <- st_intersection(
   st_transform(area_water("CT", "Hartford"), crs = st_crs(hartford_tracts)), 
   hartford_tracts)
 
-# Get crime rate by census tract
 
+
+```
+
+
+```{r}
+# Rename tract columns to distinguish from parcel and crime data
+hartford_tracts <- hartford_tracts %>%
+  rename(tract_geometry = geometry, tract_name = NAME, tract_id = GEOID)
+
+# Extract year from crime date
+c$year <- year(as.Date(c$Date))
+
+# Join parcel and crime data to census tracts (keep tract geometry)
+tp <- st_join(hartford_tracts, p)
+tc <- st_join(hartford_tracts, c)
+
+# Extract short tract name from in population data to match tract polygons
+pop$tract_name <- gsub("[^0-9.]", "", pop$Census.Tract)
+
+# Calculate average housing price by census tract
+ap <- tp %>%
+  group_by(tract_name) %>%
+  summarise(avg_house_value = mean(Assessed_Total, na.rm = TRUE))
+
+# Calculate crime rate by census tract and year
+at <- tc[1:1000,] %>% 
+  group_by(tract_name, year) %>%
+  summarise(crime_count = n()) %>%
+  left_join(pop, by = "tract_name") %>%
+  mutate(crime_rate_per_1000 = crime_count / Estimated.Population * 1000) %>%
+  select(tract_name, year, crime_rate_per_1000) %>%
+  pivot_wider(names_from = year, values_from = crime_rate_per_1000) %>%
+  left_join(ap, by = "tract_name") %>%
+  select(tract_name, everything()) 
+
+  write.csv(".//data//crime_rate_by_tract.csv", row.names = FALSE)
+
+tc
+
+```
+
+
+
+```{r}
+# Calculate centroids of parcels and crime
+centroids <- st_centroid(p)
+coords <- st_coordinates(centroids)
+p$centroid.x <- coords[, 'X']
+p$centroid.y <- coords[, 'Y']
+
+centroids <- st_centroid(c)
+coords <- st_coordinates(centroids)
+c$centroid.x <- coords[, 'X']
+c$centroid.y <- coords[, 'Y']
+
+
+# Filter property crimes and violent crimes
+stealin <- c[grep("ROBBERY|BURGLARY|LARCENY|THEFT|STOLEN", 
+                   c$UCR_1_Category), ]
+hurtin <- c[grep("ASSAULT|HOMICIDE|SHOOTING", c$UCR_1_Category), ]
+
+# Get number of thefts and violent crimes within 0.1 miles of each parcel
+p$thefts <- sapply(
+  st_is_within_distance(p, stealin, dist = units::set_units(0.1, "mi")),  
+  length)
+p$violence <- sapply(
+  st_is_within_distance(p, hurtin, dist = units::set_units(0.1, "mi")), 
+  length)
+
+st_within(p$geometry[1], p$geometry[1])
+st_within(p$geometry[1], hartford_tracts[1])
 ```
 
 
@@ -93,6 +166,8 @@ c <- c %>%
   mutate(year = year(as.Date(Date)))
 # Drop geometry data 
 cc <- sf::st_drop_geometry(c)
+pp <- sf::st_drop_geometry(p)
+
 # Calculate total crimes per year
 crimes_per_year <- table(cc$year)
 
@@ -102,19 +177,15 @@ select(year) %>%
   summarise(total_crime_per_yr = n())
 
 
-# Plot map with census tracts where size of dot represents log property value
-# and color represents log crime count
+# Aggregate crime to census level to get crime rate
 
 
 ```
 
 
 ```{r, warning = FALSE}
-
-
-
-# Plot log of total crime counts binned by area
-l1 = leaflet(d) %>%
+# Plot census tracts colored by crime rates and sized by property values
+l1 = leaflet(c_tract) %>%
   
   addProviderTiles('CartoDB.Positron') %>%
   
@@ -175,6 +246,12 @@ hartford_tracts
 parcel_dg$avg_residential_value <- parcel_dg$AV_LAND / parcel_dg$AV_TOTAL
 ```
 
+
+## Models
+
+```{r}
+
+```
 
 
 
