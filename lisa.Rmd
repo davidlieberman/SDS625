@@ -113,10 +113,39 @@ water <- st_intersection(
 
 ```
 
-## Analysis
+## Data Exploration
 
-```{r models}
-library(glmnet)
+The filters applied to the data are:
+
+* Single family homes only
+* Crimes from 2016-2021 since the assessed property values are from 2021, and we deem crimes prior to 2016 to be less relevant to the current property values
+
+The manually curated variables are:
+
+* `Price`: Assessed total value of the parcel
+* `Thefts`: Number of thefts (robberies, burglaries, larceny, theft, or stolen property) within 0.1 miles of the parcel
+* `Violence`: Number of violent crimes (assaults, homicides, shootings) within 0.1 miles of the parcel
+* `Living_Area`: Living area of the parcel
+* `Effective_Area`: Effective area of the parcel
+* `Year`: Approximate year the parcel was built
+* `Bed`: Number of bedrooms in the parcel
+* `Bath`: Number of bathrooms in the parcel
+
+The highly correlated numeric covariates are 
+
+* Thefts and Violence
+* Living Area and Effective Area
+* Bed and Bath
+
+There appear to be more thefts and violent crimes near single family homes in `dilapidated` condition. Homes in worse condition tend to be older, but there are also older homes in good condition.
+
+There is not a clear relationship between the year the parcel was built and its condition. 
+
+All covariates appear to correlate with the response variable, `Assessed_Total`.
+
+```{r plots, fig.width = 10, fig.height = 8}
+# install.packages("GGally")
+library(GGally)
 
 # Filter major property crimes and violent crimes
 stealin <- c[grep("ROBBERY|BURGLARY|LARCENY|THEFT|STOLEN", 
@@ -131,57 +160,46 @@ p$violence <- sapply(
   st_is_within_distance(p, hurtin, dist = units::set_units(0.1, "mi")), 
   length)
 # Re-order condition description of parcels
-p$Condition_Description <- ordered(
-  p$Condition_Description, 
-  levels = c("Dilapidated", "Very Poor", "Poor", "Fair", 
-             "Fair-Avg", "Average", "Avg-Good", "Good", 
-             "Good-VG", "Very Good", "Excellent"))
+p$Condition_Description <- factor(
+  as.character(p$Condition_Description), 
+  levels = c("Dilapidated", "Very Poor", "Poor", "Fair", "Fair-Avg", "Average", 
+             "Avg-Good", "Good", "Good-VG", "Very Good", "Excellent"))
 
-# Format predictors and response variable from parcel data
-X <- p %>%
-  dplyr::select(Condition_Description, 
-                AYB, Living_Area, Effective_Area, 
-                Total_Rooms, Number_of_Bedroom, Number_of_Baths,
-                thefts, violence) %>%
-  # mutate(sqrt_Living_Area = sqrt(Living_Area),
-  #        sqrt_Effective_Area = sqrt(Effective_Area),
-  #        thefts1 = thefts + 1,
-  #        thefts2 = thefts*2) %>%
-  sf::st_drop_geometry()
-X <- data.matrix(X)
-y <- p$Assessed_Total
+# Select predictors and filter out NA's
+X <- p[, c("Assessed_Total", "thefts", "violence", "Living_Area", 
+           "Effective_Area", "AYB", "Number_of_Bedroom", "Number_of_Baths", 
+           "Condition_Description")] %>%
+  rename(Price = Assessed_Total, Thefts = thefts, Violence = violence,
+         Year = AYB, Bed = Number_of_Bedroom, Bath = Number_of_Baths,
+         Condition = Condition_Description) %>%
+  na.omit()
+# Check that we haven't dropped too many rows
+nrow(p) # 7239 rows
+nrow(X) # 7220 rows
 
-# Remove rows with missing values
-w <- complete.cases(X, y)
-X <- X[w, ]
-y <- y[w]
+# Plot pairwise correlation between numeric predictors
+ggpairs(X, columns = c(1:8), lower = list(continuous = "points")) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+# Plot boxplots of numeric predictors with respect to condition description
+# Pivot data longer so that we can facet by variable
+LX <- X %>%
+  pivot_longer(cols = c(Thefts, Violence, Living_Area, Effective_Area, 
+                        Year, Bed, Bath, Price), 
+               names_to = "variable", values_to = "value")
+ggplot(data = LX, aes(x = variable, y = value)) + 
+  geom_boxplot(aes(fill = Condition), position = position_dodge(1)) + 
+  facet_wrap( ~ variable, scales = "free") + 
+  theme(axis.title.x = element_blank(), axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(), panel.grid.major.x = element_blank(),
+        axis.title.y = element_blank())
+```
 
-# Select variables
-# Run lasso regression 
-cv_tune.lasso_model = suppressMessages(suppressWarnings(
-  cv.glmnet(x = X,
-            y = y,
-            nlambda = 1000,
-            nfolds = 500,
-            pmax = 15,
-            parallel = TRUE)))
+## Analysis
 
-plot(cv_tune.lasso_model)
+We leave out `Thefts` since it is highly correlated with `Violence` but has a lower correlation with `Price` than `Violence` does. For similar reasons, we leave out `Effective_Area` and keep `Living_Area`. We fit one linear regression with both `Bed` and `Bath` and one with only `Bath`.
 
-lasso_modelmin = glmnet(x = X, y = y, lambda = cv_tune.lasso_model$lambda.min)
-lasso_model1se = glmnet(x = X, y = y, lambda = cv_tune.lasso_model$lambda.1se)
-
-# Does not select Total_Rooms
-coef(lasso_modelmin) 
-# Does not select Total_Rooms, Number_of_Bedroom, thefts
-coef(lasso_model1se)
-
-vars_keepmin = rownames(coef(lasso_modelmin))[
-  which(as.matrix(coef(lasso_modelmin)) != 0)][-1]
-vars_keep1se = rownames(coef(lasso_model1se))[
-  which(as.matrix(coef(lasso_model1se)) != 0)][-1]
-
-# Fit linear models with selected variables
+```{r models}
+# Fit linear models with manually selected variables
 m_min <- lm(log(Assessed_Total) ~ thefts + violence
             + sqrt(Living_Area) + sqrt(Effective_Area)
             + AYB + Number_of_Bedroom + Number_of_Baths 
@@ -199,6 +217,55 @@ plot(m_1se)
 
 
 ## Other stuff
+
+```{r}
+# library(glmnet)
+
+# # Format predictors and response variable from parcel data
+# X <- p %>%
+#   dplyr::select(Condition_Description, 
+#                 AYB, Living_Area, Effective_Area, 
+#                 Total_Rooms, Number_of_Bedroom, Number_of_Baths,
+#                 thefts, violence) %>%
+#   # mutate(sqrt_Living_Area = sqrt(Living_Area),
+#   #        sqrt_Effective_Area = sqrt(Effective_Area),
+#   #        thefts1 = thefts + 1,
+#   #        thefts2 = thefts*2) %>%
+#   sf::st_drop_geometry()
+# X <- data.matrix(X)
+# y <- p$Assessed_Total
+
+# # Remove rows with missing values
+# w <- complete.cases(X, y)
+# X <- X[w, ]
+# y <- y[w]
+
+# # Select variables
+# # Run lasso regression 
+# cv_tune.lasso_model = suppressMessages(suppressWarnings(
+#   cv.glmnet(x = X,
+#             y = y,
+#             nlambda = 1000,
+#             nfolds = 500,
+#             pmax = 15,
+#             parallel = TRUE)))
+# 
+# plot(cv_tune.lasso_model)
+# 
+# lasso_modelmin = glmnet(x = X, y = y, lambda = cv_tune.lasso_model$lambda.min)
+# lasso_model1se = glmnet(x = X, y = y, lambda = cv_tune.lasso_model$lambda.1se)
+# 
+# # Does not select Total_Rooms
+# coef(lasso_modelmin) 
+# # Does not select Total_Rooms, Number_of_Bedroom, thefts
+# coef(lasso_model1se)
+# 
+# vars_keepmin = rownames(coef(lasso_modelmin))[
+#   which(as.matrix(coef(lasso_modelmin)) != 0)][-1]
+# vars_keep1se = rownames(coef(lasso_model1se))[
+#   which(as.matrix(coef(lasso_model1se)) != 0)][-1]
+```
+
 
 ```{r}
 # # Calculate centroids of parcels and crime
