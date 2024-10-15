@@ -2,7 +2,7 @@
 title: "9-25-2024 Methods"
 author: "Lisa Lin"
 date: "2024-09-25"
-output: pdf_document
+output: html_document
 ---
 
 ```{r setup, include=FALSE}
@@ -58,7 +58,7 @@ options(tigris_year = 2021)
 
 ```{r data}
 # Read in filtered Hartford crime, parcel, and population data
-c <- st_read(".//data//crime_hartford_2016_2021.geojson")
+z <- st_read(".//data//crime_hartford_2016_2021.geojson")
 p <- st_read(".//data//parcel_hartford_single_family.geojson")
 pop <- read.csv(".//data//population_by_tract.csv", skip = 3, header = T)[,1:3]
 
@@ -67,7 +67,7 @@ hartford_tracts <- st_filter(tracts(state = "CT"),
                              subset(county_subdivisions(state = "CT"), 
                                     NAMELSAD == "Hartford town"),
                              .predicate = st_within) |>
-   st_transform(crs = st_crs(c))
+   st_transform(crs = st_crs(z))
 
 # Get polygons for Hartford's bodies of water 
 water <- st_intersection(
@@ -77,7 +77,7 @@ water <- st_intersection(
 
 
 ```{r}
-# # Rename tract columns to distinguish from parcel and crime data
+# Rename tract columns to distinguish from parcel and crime data
 # hartford_tracts <- hartford_tracts %>%
 #   rename(tract_geometry = geometry, tract_name = NAME, tract_id = GEOID)
 
@@ -148,9 +148,9 @@ All covariates appear to correlate with the response variable, `Assessed_Total`.
 library(GGally)
 
 # Filter major property crimes and violent crimes
-stealin <- c[grep("ROBBERY|BURGLARY|LARCENY|THEFT|STOLEN", 
-                   c$UCR_1_Category), ]
-hurtin <- c[grep("ASSAULT|HOMICIDE|SHOOTING", c$UCR_1_Category), ]
+stealin <- z[grep("ROBBERY|BURGLARY|LARCENY|THEFT", 
+                   z$UCR_1_Category), ]
+hurtin <- z[grep("ASSAULT|HOMICIDE|SHOOTING", z$UCR_1_Category), ]
 
 # Get number of thefts and violent crimes within 0.1 miles of each parcel
 p$thefts <- sapply(
@@ -166,7 +166,7 @@ p$Condition_Description <- factor(
              "Avg-Good", "Good", "Good-VG", "Very Good", "Excellent"))
 
 # Select predictors and filter out NA's
-X <- p[, c("Assessed_Total", "thefts", "violence", "Living_Area", 
+X <- p[, c("OBJECTID", "Assessed_Total", "thefts", "violence", "Living_Area", 
            "Effective_Area", "AYB", "Number_of_Bedroom", "Number_of_Baths", 
            "Condition_Description")] %>%
   rename(Price = Assessed_Total, Thefts = thefts, Violence = violence,
@@ -178,7 +178,7 @@ nrow(p) # 7239 rows
 nrow(X) # 7220 rows
 
 # Plot pairwise correlation between numeric predictors
-ggpairs(X, columns = c(1:8), lower = list(continuous = "points")) +
+ggpairs(X, columns = c(2:9), lower = list(continuous = "points")) +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 # Plot boxplots of numeric predictors with respect to condition description
 # Pivot data longer so that we can facet by variable
@@ -196,23 +196,145 @@ ggplot(data = LX, aes(x = variable, y = value)) +
 
 ## Analysis
 
-We leave out `Thefts` since it is highly correlated with `Violence` but has a lower correlation with `Price` than `Violence` does. For similar reasons, we leave out `Effective_Area` and keep `Living_Area`. We fit one linear regression with both `Bed` and `Bath` and one with only `Bath`.
+*Variable Selection.* We leave out `Thefts` since it is highly correlated with `Violence` but has a lower correlation with `Price` than `Violence` does. For similar reasons, we leave out `Effective_Area` and keep `Living_Area`. We keep both `Bed` and `Bath` for now.
 
-```{r models}
-# Fit linear models with manually selected variables
-m_min <- lm(log(Assessed_Total) ~ thefts + violence
-            + sqrt(Living_Area) + sqrt(Effective_Area)
-            + AYB + Number_of_Bedroom + Number_of_Baths 
-            + Condition_Description, data = p)
-m_1se <- lm(log(Assessed_Total) ~ violence
-            + sqrt(Living_Area) + sqrt(Effective_Area)
-            + AYB + Number_of_Baths 
-            + Condition_Description, data = p)
-summary(m_min)
-summary(m_1se)
+*Transformations.* From the correlation plots, we can see that `Price`, `Living_Area`, and `Violence` are right-skewed. To adjust for this, we take the log of `Price` and the square root of `Living_Area` and `Violence`. 
 
-plot(m_min)
-plot(m_1se)
+```{r models1, fig.width = 6, fig.height = 6}
+# Fit linear models with no transformations
+m0 <- lm(Price ~ Violence + Living_Area + Year + Bed + Bath + Condition, 
+         data = X)
+summary(m0)
+# Plot diagnostics
+par(mfrow = c(2, 2))
+plot(m0)
+
+# Fit linear models with transformations
+m1 <- lm(log(Price) ~ sqrt(Violence) + sqrt(Living_Area) + Year + 
+           Bed + Bath + Condition, 
+         data = X)
+summary(m1)
+plot(m1)
+```
+
+There are many parcels beyond 4 standard errors below the regression line. This means the model is severely overestimating the value of these parcels. Let's find out what these parcels are.
+
+* Geography: There is a cluster of offending parcels near (-72.7, 41.75). The remaining parcels are scattered throughout Hartford.
+* Condition: The "large" residuals occur for parcels in better than `Average` condition, although the majority of them are `Average` or worse.
+* Numeric covariates: The residuals are highly correlated with the living area and number of bedrooms. 
+
+*Solution.* Refer to the previous correlation plots and observe that Price and Living Area appear to have a strongly correlated linear correlation. However, we performed a `log` transformation on the Price variable but a square-root transformation on the Living Area variable. This asymmetry may be the cause of the large residuals.
+
+```{r residuals1, warning = F, fig.width = 10, fig.height = 8}
+# Investigate the large negative residuals
+r <- residuals(m1) / summary(m1)$sigma # standard residuals
+o <- X[r < -4, ]
+o$StdResid <- r[r < -4]
+nrow(o)
+
+# Plot the offending parcels geographically
+g <- ggplot(o) +
+  geom_sf(data = hartford_tracts) +
+  geom_sf(data = o) +
+  stat_sf_coordinates(size = 1, color = "red") +
+  labs(x = "Latitude", y = "Longitude") +
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+toWebGL(ggplotly(g))
+
+# Plot residuals vs. Condition
+# Function for number of observations 
+give.n <- function(x){
+  return(data.frame(
+    y = quantile(x, .75) + 0.1, 
+    label = paste0("n = ", length(x))
+    ))
+}
+ggplot(data = o, aes(x = Condition, y = StdResid)) + 
+  geom_boxplot() + 
+  stat_summary(fun.data = give.n, geom = "text", fun.y = median) + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) + 
+  theme_bw()
+
+# Plot residuals vs transformed numeric covariates
+o <- o %>%
+  mutate(logPrice = log(Price), 
+         sqrtViolence = sqrt(Violence),
+         sqrtLiving_Area = sqrt(Living_Area))
+ggpairs(o, columns = c(12:15,7:9), lower = list(continuous = "points"),
+        progress = F) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+Let's test our hypothesis. 
+
+* After taking the log of `Living_Area`, the residuals are more symmetrically distributed. We may have sacrificed some upper tail normality for the lower tail, since there appear to be more residuals larger than 4 now. However, we have reduced the total number of residuals beyond 4 SE's from 33 to 21. 
+* Dropping the number of bedrooms slightly increases adjusted $R^2$.
+
+```{r models2, fig.width = 6, fig.height = 6}
+# Take log of living area
+m2 <- lm(log(Price) ~ sqrt(Violence) + log(Living_Area) + Year + 
+           Bed + Bath + Condition, 
+         data = X)
+summary(m2)
+par(mfrow = c(2, 2))
+plot(m2)
+
+# Drop number of bedrooms
+m3 <- lm(log(Price) ~ sqrt(Violence) + log(Living_Area) + Year + 
+           Bath + Condition, 
+         data = X)
+summary(m3)
+plot(m3)
+
+# Compare residuals beyond 4 SE's
+r1 <- residuals(m1) / summary(m1)$sigma
+sum(r1 < -4 | r1 > 4)
+r3 <- residuals(m3) / summary(m3)$sigma
+sum(r3 < -4 | r3 > 4)
+```
+
+Repeating the same residuals analysis from before, we see that there are no longer any strongly correlated covariates with the residuals. 
+
+```{r residuals2, warning = F, fig.width = 10, fig.height = 8}
+# Investigate the large negative residuals
+r <- residuals(m3) / summary(m3)$sigma # standard residuals
+o <- X[r < -4, ]
+o$StdResid <- r[r < -4]
+nrow(o)
+
+# Plot the offending parcels geographically
+g <- ggplot(o) +
+  geom_sf(data = hartford_tracts) +
+  geom_sf(data = o) +
+  stat_sf_coordinates(size = 1, color = "red") +
+  labs(x = "Latitude", y = "Longitude") +
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+toWebGL(ggplotly(g))
+
+# Plot residuals vs. Condition
+# Function for number of observations 
+give.n <- function(x){
+  return(data.frame(
+    y = quantile(x, .75) + 0.1, 
+    label = paste0("n = ", length(x))
+    ))
+}
+ggplot(data = o, aes(x = Condition, y = StdResid)) + 
+  geom_boxplot() + 
+  stat_summary(fun.data = give.n, geom = "text", fun.y = median) + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) + 
+  theme_bw()
+
+# Plot residuals vs transformed numeric covariates
+o <- o %>%
+  mutate(logPrice = log(Price), 
+         sqrtViolence = sqrt(Violence),
+         logLiving_Area = log(Living_Area))
+ggpairs(o, columns = c(12:15,7,9), lower = list(continuous = "points"),
+        progress = F) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
 ```
 
 
