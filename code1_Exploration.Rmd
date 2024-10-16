@@ -162,8 +162,8 @@ setDT(copy(X))[as.data.table(hartford_tracts),
 
 ```{r}
 parcel_proj <- X |> st_transform(crs = 26956) |> st_centroid() |> st_coordinates()
-stealing_proj <- stealing |> st_transform(crs = 26956) |> st_coordinates()
-X$Thefts_kde <- kde(stealing_proj, Hscv(stealing_proj)) |> predict(x = parcel_proj)
+violence_proj <- violence |> st_transform(crs = 26956) |> st_coordinates()
+X$Violence_kde <- kde(violence_proj, Hscv(violence_proj)) |> predict(x = parcel_proj)
 ```
 
 
