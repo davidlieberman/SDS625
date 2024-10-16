@@ -75,44 +75,6 @@ water <- st_intersection(
   hartford_tracts)
 ```
 
-
-```{r}
-# Rename tract columns to distinguish from parcel and crime data
-# hartford_tracts <- hartford_tracts %>%
-#   rename(tract_geometry = geometry, tract_name = NAME, tract_id = GEOID)
-
-# # Extract year from crime date
-# c$year <- year(as.Date(c$Date))
-
-# # Join parcel and crime data to census tracts (keep tract geometry)
-# tp <- st_join(hartford_tracts, p)
-# tc <- st_join(hartford_tracts, c)
-
-# # Extract short tract name from in population data to match tract polygons
-# pop$tract_name <- gsub("[^0-9.]", "", pop$Census.Tract)
-
-# # Calculate average housing price by census tract
-# ap <- tp %>%
-#   group_by(tract_name) %>%
-#   summarise(avg_house_value = mean(Assessed_Total, na.rm = TRUE))
-# 
-# # Calculate crime rate by census tract and year
-# at <- tc[1:1000,] %>% 
-#   group_by(tract_name, year) %>%
-#   summarise(crime_count = n()) %>%
-#   left_join(pop, by = "tract_name") %>%
-#   mutate(crime_rate_per_1000 = crime_count / Estimated.Population * 1000) %>%
-#   select(tract_name, year, crime_rate_per_1000) %>%
-#   pivot_wider(names_from = year, values_from = crime_rate_per_1000) %>%
-#   left_join(ap, by = "tract_name") %>%
-#   select(tract_name, everything()) 
-# 
-#   write.csv(".//data//crime_rate_by_tract.csv", row.names = FALSE)
-# 
-# tc
-
-```
-
 ## Data Exploration
 
 The filters applied to the data are:
@@ -338,7 +300,74 @@ ggpairs(o, columns = c(12:15,7,9), lower = list(continuous = "points"),
 ```
 
 
+
+
+
 ## Other stuff
+
+```{r, fig.width=10, fig.height=8}
+# Y <- X[, 2:9] %>%
+#   mutate(logPrice = log(Price), 
+#          logLiving_Area = log(Living_Area),
+#          logYear = log(Year),
+#          sqrtBath = sqrt(Bath),
+#          sqrtViolence = sqrt(Violence)) %>%
+#   select(logPrice, logLiving_Area, Living_Area, logYear, Year, 
+#          sqrtBath, Bath, sqrtViolence, Violence)
+# ggpairs(Y, columns = c(1:9), lower = list(continuous = "points"),
+#         progress = F) +
+#   theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r, fig.width=6, fig.height=6}
+# Try no transformation on Violence
+# m4 <- lm(log(Price) ~ Violence + log(Living_Area) + Year + 
+#            Bath + Condition, 
+#          data = X)
+# summary(m4)
+# par(mfrow = c(2, 2))
+# plot(m4)
+# 
+# r1 <- residuals(m4) / summary(m4)$sigma
+# sum(r1 < -4 | r1 > 4)
+```
+
+```{r}
+# Rename tract columns to distinguish from parcel and crime data
+# hartford_tracts <- hartford_tracts %>%
+#   rename(tract_geometry = geometry, tract_name = NAME, tract_id = GEOID)
+
+# # Extract year from crime date
+# c$year <- year(as.Date(c$Date))
+
+# # Join parcel and crime data to census tracts (keep tract geometry)
+# tp <- st_join(hartford_tracts, p)
+# tc <- st_join(hartford_tracts, c)
+
+# # Extract short tract name from in population data to match tract polygons
+# pop$tract_name <- gsub("[^0-9.]", "", pop$Census.Tract)
+
+# # Calculate average housing price by census tract
+# ap <- tp %>%
+#   group_by(tract_name) %>%
+#   summarise(avg_house_value = mean(Assessed_Total, na.rm = TRUE))
+# 
+# # Calculate crime rate by census tract and year
+# at <- tc[1:1000,] %>% 
+#   group_by(tract_name, year) %>%
+#   summarise(crime_count = n()) %>%
+#   left_join(pop, by = "tract_name") %>%
+#   mutate(crime_rate_per_1000 = crime_count / Estimated.Population * 1000) %>%
+#   select(tract_name, year, crime_rate_per_1000) %>%
+#   pivot_wider(names_from = year, values_from = crime_rate_per_1000) %>%
+#   left_join(ap, by = "tract_name") %>%
+#   select(tract_name, everything()) 
+# 
+#   write.csv(".//data//crime_rate_by_tract.csv", row.names = FALSE)
+# 
+# tc
+
+```
 
 ```{r}
 # library(glmnet)
