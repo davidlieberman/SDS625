@@ -80,8 +80,10 @@ water <- st_intersection(area_water("CT", "Hartford"), hartford_tracts)
 
 #### Total Crime Count Heatmap
 
-```{r, warning = FALSE}
+```{r crime, warning = FALSE}
 # Read in the Hartford crime and parcel data
+# Load prepared crime data with kernel density estimates for thefts & violence
+# See demo2 for details
 crime_dg <- st_read(".//data//crime_hartford_2016_2021.geojson")
 parcel_dg <- st_read(".//data//parcel_hartford_single_family_crimestats.geojson")
 
@@ -97,11 +99,11 @@ ggplot(crime_dg) +
    theme_bw()
 ```
 
-#### Interactive Crime and Property Value Heatmap
+#### Interactive Crime and Property Value Map
 
-Crime is in red, parcels are in black, and the density of crime is in blue. Additional census tract level information like median income and population are included in the tooltip. Interact with the map for details.
+A sample of the data is plotted. Crime is in red, parcels are in black, and the density of crime is in blue. Additional census tract level information like median income and population are included in the tooltip. Interact with the map for details.
 
-```{r, warning = FALSE}
+```{r interactive, warning = FALSE}
 g <- ggplot(dplyr::sample_n(crime_dg, 1e3)) +
    geom_sf(data = hartford_tracts, aes(label1 = GEOID,
                                        label2 = med_income,
@@ -118,6 +120,8 @@ p$x$data[[4]]$hoverinfo <- "none"
 p
 ```
 
+#### Census Tract Level Aggregated Crime Rate and Average Property Value
+
 The manually curated variables are:
 
 * `Price`: Assessed total value of the parcel
@@ -129,26 +133,15 @@ The manually curated variables are:
 * `Bed`: Number of bedrooms in the parcel
 * `Bath`: Number of bathrooms in the parcel
 
-The highly correlated numeric covariates are 
+Violent crime rates are computed as the average number of violent crimes within 150 meters of a parcel in each tract. The average property value is computed as the mean assessed total value of the parcels in the tract.
 
-* Thefts and Violence
-* Living Area and Effective Area
-* Bed and Bath
-
-There appear to be more thefts and violent crimes near single family homes in `dilapidated` condition. Homes in worse condition tend to be older, but there are also older homes in good condition.
-
-There is not a clear relationship between the year the parcel was built and its condition. 
-
-All covariates appear to correlate with the response variable, `Assessed_Total`.
-
-```{r}
-# Load prepared data with kernel density estimates for thefts and violence
-# See demo2 for details
-
+```{r subset}
+# Subset the data and rename columns
 parcel_dg %<>% 
   subset(select = c(
     "Assessed_Total", "Living_Area", "Effective_Area", "AYB",
-    "Number_of_Bedroom", "Number_of_Baths", "Condition_Description"))
+    "Number_of_Bedroom", "Number_of_Baths", "Condition_Description",
+    "Violence"))
 
 parcel_dg %<>% 
   dplyr::rename(
@@ -160,35 +153,22 @@ parcel_dg$Condition %<>%
                     "Average", "Avg-Good", "Good", "Good-VG", "Very Good", 
                     "Excellent"))
 
+# Drop rows with NAs
 paste0("Dropping n=", nrow(parcel_dg) - nrow(na.omit(parcel_dg)), 
        " rows with NAs.")
 X <- na.omit(parcel_dg)
 ```
 
-```{r}
-stealing <- crime_dg[grep("ROBBERY|BURGLARY|LARCENY|THEFT", 
-                          crime_dg$UCR_1_Category), ]
-violence <- crime_dg[grep("ASSAULT|HOMICIDE|SHOOTING", 
-                          crime_dg$UCR_1_Category), ]
+```{r aggregate}
+# Assign each parcel to a census tract
+X$GEOID <- hartford_tracts$GEOID[st_intersects(
+  st_transform(X, crs = 26956), 
+  st_transform(hartford_tracts, crs = 26956)) |> sapply(head, 1)]
 
-sf_use_s2(FALSE)
-X$Thefts <- st_is_within_distance(st_transform(X, crs = 26956),
-                                  st_transform(stealing, crs = 26956),
-                                  dist = units::set_units(150, "m")) |> 
-  sapply(length)
-
-X$Violence <- st_is_within_distance(st_transform(X, crs = 26956),
-                                    st_transform(violence, crs = 26956),
-                                    dist = units::set_units(150, "m")) |> 
-  sapply(length)
-```
-
-```{r}
-X$GEOID <- hartford_tracts$GEOID[st_intersects(X, hartford_tracts) |> 
-                                   sapply(head, 1)]
-
+# Compute rate of violent crimes per person in each tract
+# and average property value in each tract
 setDT(copy(X))[as.data.table(hartford_tracts),
-               .(violence_rate = sum(Violence)/i.population,
+               .(violence_rate = mean(Violence),
                  avg_property_value = mean(Price)),
                on = "GEOID", by = .EACHI]
 ```
