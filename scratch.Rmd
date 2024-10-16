@@ -162,8 +162,7 @@ setDT(copy(X))[as.data.table(hartford_tracts),
 
 ```{r}
 stealing_proj <- stealing |> st_transform(crs = 26956) |> st_coordinates()
-H.scv <- Hscv(stealing_proj)
-stealing_kde <- predict(kde(stealing_proj, H.scv), x = stealing_proj)
+stealing_kde.hat <- kde(stealing_proj, Hscv(stealing_proj)) |> predict(x = stealing_proj)
 ```
 
 
