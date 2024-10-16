@@ -1,6 +1,6 @@
 ---
-title: "Hardford Crime and Property Value Analysis"
-author: "Lisa Lin"
+title: "Hartford Crime and Property Value Analysis"
+author: "Quan Le, David Lieberman, Lisa Lin"
 date: "2024-09-25"
 output: html_document
 ---
@@ -249,7 +249,7 @@ ggpairs(o, columns = c("StdResid", "sqrtViolence", "sqrtLiving_Area",
 Let's test our hypotheses. 
 
 * After taking the log of `Living_Area`, the residuals are more symmetrically distributed. We may have sacrificed some upper tail normality for the lower tail, since there appear to be more residuals larger than 4 now. However, we have reduced the total number of residuals beyond 4 SE's from 33 to 21. Notice that the `Beds` variable is no longer statistically significant.
-* Dropping the number of bedrooms slightly increases adjusted $R^2$.
+* Dropping the number of bedrooms has no noticeable effect on the model.
 * Dropping the 19 parcels increases the adjusted $R^2$ to 0.76 and further decreases the number of residuals beyond 4 SE's to 5. Thus, these parcels represented a significant source of error in the model and might be a good point of further investigation.
 
 ```{r models2, fig.width = 6, fig.height = 6}
