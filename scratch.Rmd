@@ -143,12 +143,12 @@ violence <- crime_dg[grep("ASSAULT|HOMICIDE|SHOOTING", crime_dg$UCR_1_Category),
 
 sf_use_s2(FALSE)
 X$Thefts <- st_is_within_distance(st_transform(X, crs = 26956),
-                                          st_transform(stealing, crs = 26956),
-                                          dist = units::set_units(150, "m")) |> sapply(length)
+                                  st_transform(stealing, crs = 26956),
+                                  dist = units::set_units(150, "m")) |> sapply(length)
 
 X$Violence <- st_is_within_distance(st_transform(X, crs = 26956),
-                                            st_transform(violence, crs = 26956),
-                                            dist = units::set_units(150, "m")) |> sapply(length)
+                                    st_transform(violence, crs = 26956),
+                                    dist = units::set_units(150, "m")) |> sapply(length)
 ```
 
 ```{r}
@@ -165,6 +165,7 @@ parcel_proj <- X |> st_transform(crs = 26956) |> st_centroid() |> st_coordinates
 stealing_proj <- stealing |> st_transform(crs = 26956) |> st_coordinates()
 X$Thefts_kde <- kde(stealing_proj, Hscv(stealing_proj)) |> predict(x = parcel_proj)
 ```
+
 
 ```{r plots, fig.width = 10, fig.height = 8}
 X_plot_vars <- st_drop_geometry(X)[c("Thefts", "Violence", "Living_Area", "Effective_Area",
@@ -251,7 +252,7 @@ o <- o |>
   mutate(logPrice = log(Price), 
          sqrtViolence = sqrt(Violence),
          sqrtLiving_Area = sqrt(Living_Area))
-GGally::ggpairs(o, columns = c(12:15,7:9), lower = list(continuous = "points"),
+GGally::ggpairs(o, columns = c("StdResid", "logPrice", "sqrtViolence", "sqrtLiving_Area", "Bed", "Bath", "Thefts"), lower = list(continuous = "points"),
         progress = F) +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 ```
@@ -321,7 +322,7 @@ o <- o |>
   mutate(logPrice = log(Price), 
          sqrtViolence = sqrt(Violence),
          logLiving_Area = log(Living_Area))
-GGally::ggpairs(o, columns = c(12:15,7,9), lower = list(continuous = "points"),
+GGally::ggpairs(o, columns = c("StdResid", "logPrice", "sqrtViolence", "logLiving_Area", "Bath", "Thefts"), lower = list(continuous = "points"),
         progress = F) +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 ```
