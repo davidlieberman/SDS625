@@ -161,10 +161,10 @@ setDT(copy(X))[as.data.table(hartford_tracts),
 ```
 
 ```{r}
+parcel_proj <- X |> st_transform(crs = 26956) |> st_centroid() |> st_coordinates()
 stealing_proj <- stealing |> st_transform(crs = 26956) |> st_coordinates()
-stealing_kde.hat <- kde(stealing_proj, Hscv(stealing_proj)) |> predict(x = stealing_proj)
+X$Thefts_kde <- kde(stealing_proj, Hscv(stealing_proj)) |> predict(x = parcel_proj)
 ```
-
 
 ```{r plots, fig.width = 10, fig.height = 8}
 X_plot_vars <- st_drop_geometry(X)[c("Thefts", "Violence", "Living_Area", "Effective_Area",
