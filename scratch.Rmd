@@ -11,6 +11,7 @@ library(ggplot2)
 library(plotly)
 library(sf)
 library(tigris)
+library(tidycensus)
 library(data.table)
 
 here::i_am(".git/config")
@@ -21,6 +22,8 @@ setDTthreads(threads = 0)
 
 options(tigris_use_cache = TRUE)
 options(tigris_year = 2021)
+
+census_api_key("695c23fb2b498d7f1b1b96cac681c456fea16cfd")
 ```
 
 Get crime data from ArcGIS API and remove (4) entries with missing geometry; write cleaned data to GeoJSON
@@ -34,55 +37,50 @@ Get crime data from ArcGIS API and remove (4) entries with missing geometry; wri
 Read in data
 ```{r}
 crime_dg <- st_read(".//data//crime_dg.geojson")
-parcel_dg <- st_read(".//data//parcel_dg.geojson")
+parcel_dg <- st_read(".//data//parcel_hartford.geojson")
+```
 
+Census tracts from Tigris for map baselayer
+```{r}
+hartford_census_data <- get_acs(geography = "tract", variable = c("B19013_001", "B01001_001"), state = "CT", county = "Hartford", year = 2021) |>
+   dplyr::select(GEOID, variable, estimate) |>
+   tidyr::pivot_wider(names_from = variable, values_from = estimate) |>
+   dplyr::rename(population = "B01001_001", med_income = "B19013_001")
 
 hartford_tracts <- st_filter(tracts(state = "CT"),
-                             subset(county_subdivisions(state = "CT"), 
-                                    NAMELSAD == "Hartford town"),
-                             .predicate = st_within) |>
-   st_transform(crs = st_crs(crime_dg))
+                             subset(county_subdivisions(state = "CT"), NAMELSAD == "Hartford town"),
+                             .predicate = st_within)
+hartford_tracts <- merge(hartford_tracts, hartford_census_data, by = "GEOID")
 
-# hartford_tracts <- tracts(state = "CT", cb = TRUE, filter_by = st_bbox(st_transform(crime_dg, crs = "NAD83"))) |>
-   # st_transform(crs = st_crs(crime_dg))
+water <- st_intersection(area_water("CT", "Hartford"), hartford_tracts)
+```
 
-# Get water and landmark polygons
-water <- st_intersection(
-  st_transform(area_water("CT", "Hartford"), crs = st_crs(hartford_tracts)), 
-  hartford_tracts)
-landmarks <- st_intersection(
-  st_transform(landmarks("CT", "area"), crs = st_crs(hartford_tracts)), 
-  hartford_tracts)
-
+```{r}
+crime_dg <- crime_dg |> subset(year(Date) %in% 2016:2021) |> st_transform(st_crs(hartford_tracts))
+parcel_dg <- parcel_dg |> subset(State_Use_Description == "ONE FAMILY") |> st_transform(st_crs(hartford_tracts))
 ```
 
 plot
 ```{r, warning = FALSE}
-mapview::mapview(crime_dg)
-
-
 ggplot(crime_dg) +
    geom_sf(data = hartford_tracts) +
    geom_sf(data = water, color = "blue", linewidth = 0.35) +
-   geom_sf(data = landmarks, fill = "darkgreen", size = 5) +
-   geom_hex(aes(X, Y, fill = log10(..count..)), 
-            data = ~cbind(.x, st_coordinates(.x)), alpha = 0.75) +
+   geom_hex(aes(X, Y, fill = log10(..count..)), data = ~cbind(.x, st_coordinates(.x)), alpha = 0.75, bins = 50) +
    scale_fill_binned() +
+   scale_x_continuous(guide = guide_axis(angle = 45)) +
    labs(x = "Latitude", y = "Longitude") +
    theme_bw()
 ```
 
 ```{r, warning = FALSE}
-library(mapview)
-mapview(dplyr::sample_n(crime_dg, 1e3), dplyr::sample_n(parcel_dg, 1e3))
-
 g <- ggplot(dplyr::sample_n(crime_dg, 1e3)) +
-   geom_sf(data = hartford_tracts) +
+   geom_sf(data = hartford_tracts, aes(label1 = med_income, label2 = population)) +
    geom_sf(data = dplyr::sample_n(parcel_dg, 1e3)) +
    geom_density_2d(aes(X,Y), data = ~cbind(.x, st_coordinates(.x))) +
    stat_sf_coordinates(size = 0.1, color = "red") +
    labs(x = "Latitude", y = "Longitude") +
-   theme_bw()
+   theme_bw() +
+   theme(axis.text.x = element_text(angle = 45))
 
 p <- toWebGL(ggplotly(g))
 p$x$data[[4]]$hoverinfo <- "none"
@@ -90,51 +88,57 @@ p
 ```
 
 
+## Data Exploration
 
+The filters applied to the data are:
 
+* Single family homes only
+* Crimes from 2016-2021 since the assessed property values are from 2021, and we deem crimes prior to 2016 to be less relevant to the current property values
 
+The manually curated variables are:
 
-# binning
+* `Price`: Assessed total value of the parcel
+* `Thefts`: Number of thefts (robberies, burglaries, larceny, theft, or stolen property) within 0.1 miles of the parcel
+* `Violence`: Number of violent crimes (assaults, homicides, shootings) within 0.1 miles of the parcel
+* `Living_Area`: Living area of the parcel
+* `Effective_Area`: Effective area of the parcel
+* `Year`: Approximate year the parcel was built
+* `Bed`: Number of bedrooms in the parcel
+* `Bath`: Number of bathrooms in the parcel
+
+The highly correlated numeric covariates are 
+
+* Thefts and Violence
+* Living Area and Effective Area
+* Bed and Bath
+
+There appear to be more thefts and violent crimes near single family homes in `dilapidated` condition. Homes in worse condition tend to be older, but there are also older homes in good condition.
+
+There is not a clear relationship between the year the parcel was built and its condition. 
+
+All covariates appear to correlate with the response variable, `Assessed_Total`.
 
 ```{r}
-# get centroid of each parcel. add centroids to parcel_dg
+parcel_dg <- parcel_dg[c("OBJECTID", "Assessed_Total", "Living_Area", "Effective_Area",
+                        "AYB", "Number_of_Bedroom", "Number_of_Baths", "Condition_Description")] |>
+   dplyr::rename(Price = "Assessed_Total", Year = "AYB", Bed = "Number_of_Bedroom",
+                 Bath = "Number_of_Baths", Condition = "Condition_Description") |>
+   dplyr::mutate(Condition = factor(Condition))
 
-centroids <- st_centroid(parcel_dg)
-coords <- st_coordinates(centroids)
-parcel_dg$centroid.x <- coords[, 'X']
-parcel_dg$centroid.y <- coords[, 'Y']
-
-head(parcel_dg)
-
-
-stealin <- crime_dg[grep(
-  "ROBBERY|BURGLARY|LARCENY",
-  crime_dg$UCR_1_Category), 
-]
-
-
-
-parcel_dg$thefts <- sapply(st_is_within_distance(parcel_dg, stealin, 0.1), 
-                           length)
-
-sfh <- parcel_dg[parcel_dg$State_Use_Description == "ONE FAMILY",]
-
-sfh$Condition_Description <- ordered(
-  sfh$Condition_Description, 
-  levels=c("Dilapidated", "Very Poor", "Poor", "Fair", 
-           "Fair-Avg", "Average", "Avg-Good", "Good", 
-           "Good-VG", "Very Good", "Excellent"))
-
-model <- lm(log(Assessed_Total) ~ thefts 
-            + sqrt(Living_Area)
-            + AYB
-            + Condition_Description, data = sfh)
-summary(model)
-
-unique(sfh$Condition_Description)
-
+paste0("Dropping n=", nrow(parcel_dg) - nrow(na.omit(parcel_dg)), " rows with NAs.")
+X <- na.omit(parcel_dg)
 ```
 
-# KDE
+```{r}
+stealing <- crime_dg[grep("ROBBERY|BURGLARY|LARCENY|THEFT", crime_dg$UCR_1_Category), ]
+violence <- crime_dg[grep("ASSAULT|HOMICIDE|SHOOTING", crime_dg$UCR_1_Category), ]
 
+sf_use_s2(FALSE)
+X$Thefts <- st_is_within_distance(st_transform(X, crs = 26918),
+                                          st_transform(stealing, crs = 26918),
+                                          dist = units::set_units(150, "m")) |> sapply(length)
 
+X$Violence <- st_is_within_distance(st_transform(X, crs = 26918),
+                                            st_transform(violence, crs = 26918),
+                                            dist = units::set_units(150, "m")) |> sapply(length)
+```
