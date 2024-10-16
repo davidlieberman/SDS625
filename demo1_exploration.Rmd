@@ -78,6 +78,10 @@ hartford_tracts <- merge(hartford_tracts, hartford_census_data, by = "GEOID")
 water <- st_intersection(area_water("CT", "Hartford"), hartford_tracts)
 ```
 
+#### All Crimes and Parcels in Hartford
+
+[See here (takes a little time to load):] (https://kepler.gl/demo/map?mapUrl=https://dl.dropboxusercontent.com/scl/fi/8wlw844de8twz77zg88oj/keplergl_tfftv3d.json?rlkey=qjpfx758l0ehopmzsr50869jk&dl=0) 
+
 #### Total Crime Count Heatmap
 
 ```{r crime, warning = FALSE}
