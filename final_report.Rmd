@@ -113,7 +113,7 @@ identified by parks, industrial districts, private universities,
 or similar areas without much human presence. A side-by-side comparison with 
 the Kepler map usually provides some insight into the particulars. 
 
-```{r crime, warning = FALSE, include = FALSE}
+```{r crime, warning = FALSE, echo = FALSE, results='hide'}
 # Read in the Hartford crime and parcel data
 # Load prepared crime data with kernel density estimates for thefts & violence
 # See demo2 for details
@@ -516,7 +516,10 @@ g <- ggplot(o) +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 g
 # toWebGL(ggplotly(g))
+```
 
+
+```{r residuals1_box, warning = F}
 # Plot residuals vs. Condition
 # Function for number of observations 
 give.n <- function(x){
