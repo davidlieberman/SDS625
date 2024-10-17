@@ -1,0 +1,660 @@
+---
+title: "Housing Project Report"
+author: "David Lieberman, Lisa Lin, Quan Le"
+date: "`r Sys.Date()`"
+output: pdf_document
+always_allow_html: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(ggplot2)
+library(plotly)
+library(sf)
+library(tigris)
+library(tidycensus)
+library(magrittr)
+library(data.table)
+library(ks)
+
+knitr::opts_chunk$set(message = FALSE)
+
+setDTthreads(threads = 0)
+
+options(tigris_use_cache = TRUE)
+options(tigris_year = 2021)
+
+census_api_key("695c23fb2b498d7f1b1b96cac681c456fea16cfd")
+```
+
+# Introduction
+
+This report details a case study of the augmentation of a particular real 
+estate dataset, and the exploration of said dataset. We describe first the 
+real estate data, and then the augmenting of the data with features 
+derived from a Hartford crime dataset. We provide some explorations of the 
+crime data, and construct a collection of models that hope to explain some of 
+the variation in the real estate data.
+
+# Data
+
+## CT Real Estate
+
+The Connecticut Real Estate data is a collection of data on properties 
+across Connecticut. It includes, among other things, houses, condos, 
+businesses, and apartments. The data includes the geometric shapes of each 
+land parcel, and other features like the number of bedrooms, bathrooms, its 
+appraised price, its address, and so on. We defer the reader to the many other
+reports that will also concern this dataset. 
+
+## Hartford Crime Incidents
+
+The data can be obtained from either [arcgis](https://hub.arcgis.com/datasets/0eaa6be357a74f5280157125e9b547fc_2/explore?location=41.772217%2C-72.686691%2C19.10) or [Open Data Hartford](https://open-data-hartford-hartfordgis.hub.arcgis.com/documents/82a9e9a7847c400ebdfd0f9affb472b0/about). It consists of incident-level data on crimes in Hartford, CT. Of 
+particular interest to us is the fact that each incident includes geographic 
+data of where the incident occurred, and includes incidents from 2005 to 2021.
+Some relevant features of the crime are:
+
+- Date: the date of the incident in YYYY-MM-DD format,
+- Time_24HR: the time of the incident in a 24-hour HHMM format,
+- Address: the address of the incident,
+- UCR_1_Category: the Uniform Crime Reporting category of the incident (e.g. 
+  "SUICIDE", "HOMICIDE", "LARCENY", "WEAPONS OFFENSES"),
+- UCR_1_Description: the UCR description of the incident with more detailed 
+  information than the category (e.g. "ABANDON-FAMILY", "LARC1-BICYCLE"),
+- geometry: the GIS point data for each incident. 
+
+The other features are less relevant. There are case numbers, neighborhoods, 
+and partial reporting for UCR2 categories. 
+
+While there are a number of ways to augment the parcel data, this case study 
+is focused on the two simplest cases -- by counting the crime incidents in a 
+certain radius from the real estate parcels, and using kernel density 
+estimation to estimate a crime density.
+Further analysis can consider more elaborate choices of kernel and bandwidth.
+
+
+# Exploration
+
+For tractability, we only consider crime data from 2016-2021.
+
+## Interactive Map: Kepler
+
+Using Kepler (an interactive data visualization tool), we created a
+web-available map of both the parcel and crime data, available [here](https://kepler.gl/demo/map?mapUrl=https://dl.dropboxusercontent.com/scl/fi/8wlw844de8twz77zg88oj/keplergl_tfftv3d.json?rlkey=qjpfx758l0ehopmzsr50869jk&dl=0). Note that it
+does take a while (at least a minute) to load, so please be patient. 
+
+## Crime Heatmap
+
+```{r tracts, include=FALSE}
+# Get the census tracts from Tigris for the map baselayer
+hartford_census_data <- get_acs(
+  geography = "tract", variable = c("B19013_001", "B01001_001"), 
+  state = "CT", county = "Hartford", year = 2021
+  ) |>
+   dplyr::select(GEOID, variable, estimate) |>
+   tidyr::pivot_wider(names_from = variable, values_from = estimate) |>
+   dplyr::rename(population = "B01001_001", med_income = "B19013_001")
+
+hartford_tracts <- st_filter(tracts(state = "CT"),
+                             subset(county_subdivisions(state = "CT"), 
+                                    NAMELSAD == "Hartford town"),
+                             .predicate = st_within)
+hartford_tracts <- merge(hartford_tracts, hartford_census_data, by = "GEOID")
+
+water <- st_intersection(area_water("CT", "Hartford"), hartford_tracts)
+```
+
+
+Below, we can see a heatmap of the log-crime counts from 2016 to 2021. Note 
+the noticeable lack of crimes near the river (outlined in blue), save for three 
+tiles. These can be attributed to bridges. Other gaps in the heatmap can be 
+identified by parks, industrial districts, private universities,
+or similar areas without much human presence. A side-by-side comparison with 
+the Kepler map usually provides some insight into the particulars. 
+
+```{r crime, warning = FALSE, echo=FALSE}
+# Read in the Hartford crime and parcel data
+# Load prepared crime data with kernel density estimates for thefts & violence
+# See demo2 for details
+crime_dg <- st_read(".//data//crime_hartford_2016_2021.geojson")
+parcel_dg <- st_read(".//data//parcel_hartford_single_family_crimestats.geojson")
+
+# Plot
+ggplot(crime_dg) +
+   geom_sf(data = hartford_tracts) +
+   geom_sf(data = water, color = "blue", linewidth = 0.35) +
+   geom_hex(aes(X, Y, fill = log10(..count..)), 
+            data = ~cbind(.x, st_coordinates(.x)), alpha = 0.75, bins = 50) +
+   scale_fill_binned() +
+   scale_x_continuous(guide = guide_axis(angle = 45)) +
+   labs(x = "Latitude", y = "Longitude") +
+   theme_bw()
+```
+
+## Interactive Crime and Property Value Map
+
+A sample of the data is plotted. Crime is in red, parcels are in black, and the density of crime is in blue. Additional census tract level information like median income and population are included in the tooltip. Interact with the map for details. Note that it will not be visible 
+in the PDF version of this report.
+
+
+```{r interactive, warning = FALSE, echo=FALSE}
+g <- ggplot(dplyr::sample_n(crime_dg, 1e3)) +
+   geom_sf(data = hartford_tracts, aes(label1 = GEOID,
+                                       label2 = med_income,
+                                       label3 = population)) +
+   geom_sf(data = dplyr::sample_n(parcel_dg, 1e3)) +
+   geom_density_2d(aes(X,Y), data = ~cbind(.x, st_coordinates(.x))) +
+   stat_sf_coordinates(size = 0.1, color = "red") +
+   labs(x = "Latitude", y = "Longitude") +
+   theme_bw() +
+   theme(axis.text.x = element_text(angle = 45))
+
+p <- toWebGL(ggplotly(g))
+p$x$data[[4]]$hoverinfo <- "none"
+p
+```
+
+
+
+
+
+```{r subset, include=FALSE}
+# Subset the data and rename columns
+parcel_dg %<>% 
+  subset(select = c(
+    "Assessed_Total", "Living_Area", "Effective_Area", "AYB",
+    "Number_of_Bedroom", "Number_of_Baths", "Condition_Description",
+    "Violence"))
+
+parcel_dg %<>% 
+  dplyr::rename(
+    Price = "Assessed_Total", Year = "AYB", Bed = "Number_of_Bedroom",
+    Bath = "Number_of_Baths", Condition = "Condition_Description")
+
+parcel_dg$Condition %<>% 
+  factor(levels = c("Dilapidated", "Very Poor", "Poor", "Fair", "Fair-Avg", 
+                    "Average", "Avg-Good", "Good", "Good-VG", "Very Good", 
+                    "Excellent"))
+
+# Drop rows with NAs
+paste0("Dropping n=", nrow(parcel_dg) - nrow(na.omit(parcel_dg)), 
+       " rows with NAs.")
+X <- na.omit(parcel_dg)
+```
+
+
+## Census Tract Level Aggregated Crime Rate and Average Property Value
+
+Violent crime rates are computed as the average number of violent crimes within 150 meters of a parcel in each tract. The average property value is computed as the mean assessed total value of the parcels in the tract. More details as to what constitutes a "violent crime" can be found 
+in the next section.
+
+```{r aggregate}
+# Assign each parcel to a census tract
+X$GEOID <- hartford_tracts$GEOID[st_intersects(
+  st_transform(X, crs = 26956), 
+  st_transform(hartford_tracts, crs = 26956)) |> sapply(head, 1)]
+
+# Compute rate of violent crimes per person in each tract
+# and average property value in each tract
+census_lvl <- setDT(copy(X))[as.data.table(hartford_tracts),
+                             .(violence_rate = mean(Violence),
+                               avg_property_value = mean(Price)),
+                             on = "GEOID", by = .EACHI]
+```
+
+
+```{r}
+plot(census_lvl$violence_rate, census_lvl$avg_property_value,
+     log='y', main='Violent Crime Rate vs. Average Property Value',
+     xlab='Violent Crime Rate', ylab='Average Property Value')
+```
+
+
+
+
+# Modeling
+
+```{r setup2, include=FALSE}
+library(ggplot2)    # Plots
+library(plotly)     # Interactive plots
+library(sf)         # Polygons
+library(GGally)     # Pairwise correlation plots
+library(tigris)     # Census data
+library(data.table) # Faster data manipulation
+library(dplyr)      # Data manipulation
+library(tidyr)      # Data manipulation
+library(ks)         # Kernel density estimation
+
+setDTthreads(threads = 0)
+
+options(tigris_use_cache = TRUE)
+options(tigris_year = 2021)
+```
+
+## Preprocessing
+
+Since the data is so large, we prepare some filters and computations in 
+advance and load the processed data. The filters applied to the data are:
+
+* single family homes only, and
+* thefts and violent crimes from 2016-2021.
+
+We restrict our attention to single family homes. These are by far the
+largest group in the dataset. Restricting our analysis to single family homes 
+helps tractability and interpretability, as the dataset includes government and 
+business properties as well. We are also more interested in the 
+relationship between crime and single-family homes in particular, as opposed to
+all real estate in aggregate.
+
+Since the assessed property values are from 2021, 
+crimes prior to 2016 will be less relevant to the current property values. 
+We also select the crimes that will we predict will be most influential on the
+home value -- violent crime and thefts. 
+
+Within the crime data, we filter out major property crimes (robberies, 
+burglaries, larceny, or theft) and violent crimes (assaults, homicides, 
+shootings).
+
+The thefts and violent crimes data is then aggregated spatially in two ways:
+
+1. Count the number of crimes within 150 meters of each parcel
+2. Compute kernel density estimation of crimes within a bandwidth of each parcel, where bandwidth is selected via cross-validation
+
+```{r data, include=FALSE}
+# Read in filtered Hartford crime and parcel data
+z <- st_read(".//data//crime_hartford_2016_2021.geojson")
+p <- st_read(".//data//parcel_hartford_single_family_crimestats.geojson")
+
+# Get polygons for Hartford's census tracts
+hartford_tracts <- st_filter(tracts(state = "CT"),
+                             subset(county_subdivisions(state = "CT"), 
+                                    NAMELSAD == "Hartford town"),
+                             .predicate = st_within) |>
+   st_transform(crs = st_crs(z))
+
+# Re-order condition description of parcels
+p$Condition_Description <- factor(
+  as.character(p$Condition_Description), 
+  levels = c("Dilapidated", "Very Poor", "Poor", "Fair", "Fair-Avg", "Average", 
+             "Avg-Good", "Good", "Good-VG", "Very Good", "Excellent"))
+
+# Select predictors and filter out NA's
+X <- p[, c("OBJECTID", "Assessed_Total", 
+           "Thefts", "Violence", "Thefts_KDE", "Violence_KDE", 
+           "Living_Area", "Effective_Area", "AYB", 
+           "Number_of_Bedroom", "Number_of_Baths", 
+           "Condition_Description")] %>%
+  rename(Price = Assessed_Total, Year = AYB, 
+         Bed = Number_of_Bedroom, Bath = Number_of_Baths,
+         Condition = Condition_Description) %>%
+  na.omit()
+# Check that we haven't dropped too many rows
+nrow(p) # 7239 rows
+nrow(X) # 7220 rows
+```
+
+## Visualization
+
+The manually curated variables are:
+
+* `Price`: Assessed total value of the parcel
+* `Thefts`: Number of thefts (robberies, burglaries, larceny, theft, or stolen property) within 150 meters of the parcel
+* `Violence`: Number of violent crimes (assaults, homicides, shootings) within 150 meters of the parcel
+* `Thefts_KDE`: Kernel density estimation of thefts
+* `Violence_KDE`: Kernel density estimation of violence
+* `Living_Area`: Living area of the parcel
+* `Effective_Area`: Effective area of the parcel
+* `Year`: Approximate year the parcel was built
+* `Bed`: Number of bedrooms in the parcel
+* `Bath`: Number of bathrooms in the parcel
+* `Condition_Description`: The condition of the parcel, one of "Dilapidated", 
+  "Very Poor", "Poor", "Fair", "Fair-Avg", "Average", "Avg-Good", "Good", 
+  "Good-VG", "Very Good", "Excellent"
+
+### Pairs
+
+We can generate the pairwise plots of the variables -- scatter plots, 
+densities, and correlations. 
+
+```{r pairs, fig.width = 10, fig.height = 8, echo=F}
+# Plot pairwise correlation between numeric predictors
+ggpairs(X, columns = c(2:11), lower = list(continuous = "points"), 
+        progress = F) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+The highly correlated numeric covariates are 
+
+* Thefts and Violence
+* Living Area and Effective Area
+* Bed and Bath
+
+These are generally to be expected. It is not surprising that neighborhoods
+experiencing high amounts of violent crime would alse experience a high number
+of thefts. A potential counterargument is that thefts are more likely to occur
+at wealthier neighborhoods, and these neighborhoods would be less likely to 
+have as much violent crime. There are issues with this argument. Namely, 
+wealthier neighborhoods may have more security, counteracting the effect of a 
+more enticing theft target. In addition, it is unclear as to whether or not this
+phenomenon would even have a significant effect on the correlation: cases of 
+this kind may be significantly less in number than overall theft.
+
+Living area and effective area being correlated is also unsurprising. The 
+effective area includes the living area. Similarly, it'd be surprising to see
+a negative correlation between beds and baths. 
+
+All covariates appear to correlate with the response variable, `Assessed_Total`.
+ 
+
+### Condition Factors
+
+Further, by splitting up the conditions, we can
+see how the numeric variables correlate to these factors. 
+
+```{r boxplots, fig.width = 10, fig.height = 8, echo=F}
+# Plot boxplots of numeric predictors with respect to condition description
+# Pivot data longer so that we can facet by variable
+LX <- X %>%
+  pivot_longer(cols = c(Thefts, Violence, Thefts_KDE, Violence_KDE,
+                        Living_Area, Effective_Area, 
+                        Year, Bed, Bath, Price), 
+               names_to = "variable", values_to = "value")
+ggplot(data = LX, aes(x = variable, y = value)) + 
+  geom_boxplot(aes(fill = Condition), position = position_dodge(1)) + 
+  facet_wrap( ~ variable, scales = "free", ) + 
+  theme(axis.title.x = element_blank(), axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(), panel.grid.major.x = element_blank(),
+        axis.title.y = element_blank())
+```
+
+A couple numeric covariates appear to be correlated with the condition of the parcel:
+
+* Thefts and Violence. There appear to be more thefts and violent crimes near single family homes in `dilapidated` condition. The median thefts near parcels in very poor condition calculated by KDE is relatively higher than the median calculated by counts.
+* Year. There appears to be a quadratic relationship between the year a parcel was built and its condition. The median years that parcels were built for those in dilapidated and very poor condition tend to be earlier than parcels in better condition, suggesting that older homes are more likely to be in worse condition. However, there are also older homes in good condition, and homes in average condition have the most recent median year built.
+
+## Analysis
+
+### 1. Crime counts
+
+We first consider the `Thefts` and `Violence` variables computed by counting crime occurrences within a 150-meter radius of a parcel.
+
+*Variable Selection.* 
+Given the relatively small number of variables, we forego an automated method 
+(e.g. lasso, stepwise information criteria) and instead inspect our variables 
+for collinearity. We leave out `Thefts` since it is highly correlated with 
+`Violence` but has a lower correlation with `Price` than `Violence` does. 
+For similar reasons, we leave out `Effective_Area` and keep `Living_Area`. 
+We keep both `Bed` and `Bath` for now.
+
+
+```{r models0.summary, fig.width = 6, fig.height = 6}
+# Fit linear models with no transformations
+m0 <- lm(Price ~ Violence + Living_Area + Year + Bed + Bath + Condition, 
+         data = X)
+summary(m0)
+```
+
+
+Suppose for a moment that the data satisfy the linear regression assumptions.
+We will analyze the diagnostic plots in the next subsection.
+
+Even with a relatively naive model, we note that we have a fairly good 
+R-squared value at around 0.8 or so. Regarding the coefficients, we see that the 
+coefficient for violence is negative, and comes to about -250 dollars per 
+violent crime. The bed and bath coefficients have opposite sign. As hoped, the
+condition factors (with `Dilapidated` as baseline) are ordered in the expected 
+manner. 
+
+Each of the numeric variables has a significant p-value, smaller than R's 
+machine precision. Most of the condition factors are also significant, save for
+`Very Poor`, whereas `Poor` is only a bit significant. We can generally 
+interpret these to mean that between sub-fair conditions, the differences 
+between house price are not so significant. A potential reason for this is the
+fact that houses in poorer condition have little actual value derived from the
+structure itself -- assessors might be considering these properties as 
+requiring a significant renovation or even a teardown.
+
+The largest t-statistics in magnitude are, in decreasing order, `Living_Area`,
+`Violence`, and `Year`.
+
+#### Diagnostics
+
+```{r models0.diag, fig.width = 6, fig.height = 6}
+# Plot diagnostics
+par(mfrow = c(2, 2))
+plot(m0)
+```
+
+
+
+The residuals cast doubt on our linear regression assumptions. In particular,
+it seems that the residuals are neither independent, homoscedastic, nor normal.
+The q-q plot has a heavy tails, and we can see non-constant trendlines in the 
+residual plots. 
+
+*Transformations.* From the correlation plots, we can see that `Price`, `Living_Area`, and `Violence` are right-skewed. To adjust for this, we take the log of `Price` and the square root of `Living_Area` and `Violence`. 
+
+```{r models1.sum, fig.width = 6, fig.height = 6}
+# Fit linear models with transformations
+m1 <- lm(log(Price) ~ sqrt(Violence) + sqrt(Living_Area) + Year + 
+           Bed + Bath + Condition, 
+         data = X)
+summary(m1)
+```
+
+
+If the linear regression assumptions hold, then not much changes in the
+interpretation of the coefficients between
+models -- the bath and bed coefficients have opposite sign, violence is 
+negative, and the condition factors are ordered as expected. 
+
+A notable difference is the significances -- now all the p-values are quite 
+small.
+
+The largest t-statistics in magnitude are `sqrt(Living_Area)` and 
+`sqrt(Violence)`, in decreasing order.
+
+```{r models1.diag, fig.width = 6, fig.height = 6}
+par(mfrow = c(2, 2))
+plot(m1)
+```
+
+
+#### Diagnostics
+
+These seem better, but there is a group of notable residuals. We see that this 
+cluster of properties is priced well below what our model expects. We explore 
+this discrepancy in the subsequent section.
+
+Otherwise, the plots are ok. It seems that for the most part, the residuals 
+are independent and homoscedastic. The q-q plot is also better, but still has
+a deviation from the normal quantiles at the tails.
+
+The residual plots look much better for the transformed model.
+
+#### Outliers
+
+There are 31 parcels beyond 4 standard errors below the regression line. This means the model is severely overestimating the value of these parcels. Let's find out what these parcels are.
+
+* Geography: There is a cluster of 19 offending parcels near (-72.7, 41.75) in Census Tract 5049. The remaining parcels are scattered throughout Hartford. Interact with the map to see the details of each parcel.
+* Condition: The "large" residuals occur for parcels in better than `Average` condition, although the majority of them are `Average` or worse.
+* Numeric covariates: The residuals are highly correlated with the living area and number of bedrooms. 
+
+*Solutions.* We try the following fixes:
+
+* Log transform living area: Refer to the previous correlation plots and observe that Price and Living Area appear to have a strongly correlated linear correlation. However, we performed a `log` transformation on the Price variable but a square-root transformation on the Living Area variable. This asymmetry may be the cause of the large residuals.
+
+* Drop number of bedrooms: The number of bedrooms is highly correlated with the residuals, and we might infer that most of the information provided by this variable is already captured in the number of bathrooms.
+
+* Drop the 19 parcels: These parcels are in a small geographic area and may be subject to some unobserved spatial effect.
+
+```{r residuals1, warning = F, fig.width = 10, fig.height = 8}
+# Investigate the large negative residuals
+r <- residuals(m1) / summary(m1)$sigma # standard residuals
+o <- X[r < -4, ]
+o$StdResid <- r[r < -4]
+nrow(o)
+
+# Add a tooltip label for parcels
+o <- o %>% mutate(label = paste0('Price: ', round(Price), '<br>',
+                                 'Year: ', Year, '<br>',
+                                 'Condition: ', Condition, '<br>',
+                                 'Living Area: ', Living_Area, '<br>',
+                                 'Bedrooms: ', Bed, '<br>', 
+                                 'Bathrooms: ', Bath, '<br>',
+                                 'Violence: ', Violence
+                                 ))
+# Plot the offending parcels geographically
+g <- ggplot(o) +
+  geom_sf(data = hartford_tracts, aes(text = NAME)) +
+  geom_sf(data = o, 
+          aes(text = label)) +
+  stat_sf_coordinates(size = 1, color = "red") +
+  labs(x = "Latitude", y = "Longitude") +
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+toWebGL(ggplotly(g))
+
+# Plot residuals vs. Condition
+# Function for number of observations 
+give.n <- function(x){
+  return(data.frame(
+    y = quantile(x, .75) + 0.1, 
+    label = paste0("n = ", length(x))
+    ))
+}
+ggplot(data = o, aes(x = Condition, y = StdResid)) + 
+  geom_boxplot() + 
+  stat_summary(fun.data = give.n, geom = "text", fun.y = median) + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) + 
+  theme_bw()
+
+# Plot residuals vs transformed numeric covariates
+o <- o %>%
+  mutate(logPrice = log(Price), 
+         sqrtViolence = sqrt(Violence),
+         sqrtLiving_Area = sqrt(Living_Area))
+ggpairs(o, columns = c("StdResid", "sqrtViolence", "sqrtLiving_Area", 
+                       "Year", "Bed", "Bath"), 
+        lower = list(continuous = "points"),
+        progress = F) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+Let's test our hypotheses. 
+
+* After taking the log of `Living_Area`, the residuals are more symmetrically distributed. We may have sacrificed some upper tail normality for the lower tail, since there appear to be more residuals larger than 4 now. However, we have reduced the total number of residuals beyond 4 SE's from 33 to 21. Notice that the `Beds` variable is no longer statistically significant.
+* Dropping the number of bedrooms has no noticeable effect on the model.
+* Dropping the 19 parcels increases the adjusted $R^2$ to 0.76 and further decreases the number of residuals beyond 4 SE's to 5. Thus, these parcels represented a significant source of error in the model and might be a good point of further investigation.
+
+```{r models2, fig.width = 6, fig.height = 6}
+# Take log of living area
+m2 <- lm(log(Price) ~ sqrt(Violence) + log(Living_Area) + Year + 
+           Bed + Bath + Condition, 
+         data = X)
+summary(m2)
+par(mfrow = c(2, 2))
+plot(m2)
+
+# Drop number of bedrooms
+m3 <- lm(log(Price) ~ sqrt(Violence) + log(Living_Area) + Year + 
+           Bath + Condition, 
+         data = X)
+summary(m3)
+plot(m3)
+
+# Drop the 19 outlier parcels
+XO <- X[!X$OBJECTID %in% o$OBJECTID, ]
+m4 <- lm(log(Price) ~ sqrt(Violence) + log(Living_Area) + Year + 
+           Bath + Condition, 
+         data = XO)
+summary(m4)
+plot(m4)
+
+# Compare residuals beyond 4 SE's
+r1 <- residuals(m1) / summary(m1)$sigma
+sum(r1 < -4 | r1 > 4)
+r3 <- residuals(m3) / summary(m3)$sigma
+sum(r3 < -4 | r3 > 4)
+r4 <- residuals(m4) / summary(m4)$sigma
+sum(r4 < -4 | r4 > 4)
+```
+
+### 2. Crime KDE
+
+Replacing the `Violence` computed by counts with `Violence_KDE` computed by kernel density estimation increases the adjusted $R^2$ and reduces residual standard error. From the plots, there is not a substantial change in the residuals. Thus, we can conclude that the KDE of violent crimes is a better predictor of property value than the count of violent crimes. Our final model is:
+
+$$
+\log \text{Price} = \beta_0 + \beta_1 \sqrt{\text{Violence\_KDE}} + \beta_2 \log(\text{Living\_Area}) + \beta_3 \text{Year} + \beta_4 \text{Bath} + \beta_5 \text{Condition}
+$$
+
+```{r models3.sum, fig.width = 6, fig.height = 6}
+m5 <- lm(log(Price) ~ sqrt(Violence_KDE) + log(Living_Area) + Year + 
+           Bath + Condition, 
+         data = XO)
+summary(m5)
+```
+
+
+```{r models3.diag, fig.width = 6, fig.height = 6}
+par(mfrow = c(2, 2))
+plot(m5)
+```
+
+The diagnostic plots are better in the sense that there is no longer a cluster 
+of large residuals. The trendline in the residuals vs. fitted plot still 
+features that undesireable kink in the middle. The remainder of the plots show
+little deviation from those seen in previous sections.
+
+# Conclusion
+
+Violence, while considering other variables, is a significant and negative
+predictor of property value. The KDE of violent crimes is a better predictor
+than the count of violent crimes. 
+
+While our model does not exactly line up with the data, it is a good start. 
+We can see that our model explains a significant amount of the variation in
+the log assessed price.
+
+# Further Directions
+
+Our analysis was fairly constrained to ensure that our analysis came to a 
+conclusion. There are a great many different directions that we could take. In
+terms of variable selection, we could expand our analysis to consider 
+multifamily homes. Alternatively, we could modify the kinds of crimes that 
+we consider. There are dozens and dozens of categories alone, not to mention
+the specific crime descriptions that belong in each category.
+
+Other feature choices are possible. We could consider different kernels
+and bandwidths for KDE, or different thresholds for the crime counts. We could
+add interaction and polynomial terms.
+
+Other transformations beyond the standard log and root that we use here are 
+possible. Other models are possible, especially if we are less interested in
+modeling variation and more interested in prediction. 
+
+Other interpretations are possible. While we can compute t-statistics and 
+p-values, or compare magnitudes of the coefficients, there are other methods
+that consider feature importance.
+
+We could choose a different problem. Our analysis focused on regressing the 
+assessed value of a property, but another analysis could look for the best
+places to rob people in Hartford. 
+
+
+
+# References
+
+## Spatial regression 
+
+https://oerstatistics.wordpress.com/wp-content/uploads/2016/03/intro_to_r.pdf#page=68.08
+
+https://crd230.github.io/lab8.html
+
+## Kernel density estimation
+
+https://seeing-statistics.com/issue4/
+
+
+
