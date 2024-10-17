@@ -7,7 +7,7 @@ always_allow_html: true
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(echo = FALSE)
 
 library(ggplot2)
 library(plotly)
@@ -113,7 +113,7 @@ identified by parks, industrial districts, private universities,
 or similar areas without much human presence. A side-by-side comparison with 
 the Kepler map usually provides some insight into the particulars. 
 
-```{r crime, warning = FALSE, echo=FALSE}
+```{r crime, warning = FALSE, include = FALSE}
 # Read in the Hartford crime and parcel data
 # Load prepared crime data with kernel density estimates for thefts & violence
 # See demo2 for details
@@ -489,12 +489,12 @@ There are 31 parcels beyond 4 standard errors below the regression line. This me
 
 * Drop the 19 parcels: These parcels are in a small geographic area and may be subject to some unobserved spatial effect.
 
-```{r residuals1, warning = F, fig.width = 10, fig.height = 8}
+```{r residuals1_map, warning = F}
 # Investigate the large negative residuals
 r <- residuals(m1) / summary(m1)$sigma # standard residuals
 o <- X[r < -4, ]
 o$StdResid <- r[r < -4]
-nrow(o)
+# nrow(o) # 31
 
 # Add a tooltip label for parcels
 o <- o %>% mutate(label = paste0('Price: ', round(Price), '<br>',
@@ -514,7 +514,8 @@ g <- ggplot(o) +
   labs(x = "Latitude", y = "Longitude") +
   theme_bw() + 
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
-toWebGL(ggplotly(g))
+g
+# toWebGL(ggplotly(g))
 
 # Plot residuals vs. Condition
 # Function for number of observations 
@@ -529,7 +530,10 @@ ggplot(data = o, aes(x = Condition, y = StdResid)) +
   stat_summary(fun.data = give.n, geom = "text", fun.y = median) + 
   theme(axis.text.x = element_text(angle = 45, hjust = 1)) + 
   theme_bw()
+```
 
+
+```{r residuals1_pairs, warning = F, fig.width = 10, fig.height = 8}
 # Plot residuals vs transformed numeric covariates
 o <- o %>%
   mutate(logPrice = log(Price), 
@@ -542,27 +546,26 @@ ggpairs(o, columns = c("StdResid", "sqrtViolence", "sqrtLiving_Area",
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 ```
 
-Let's test our hypotheses. 
+Let's test our hypotheses (See Demo 2 for full summary output and diagnostic plots). 
 
-* After taking the log of `Living_Area`, the residuals are more symmetrically distributed. We may have sacrificed some upper tail normality for the lower tail, since there appear to be more residuals larger than 4 now. However, we have reduced the total number of residuals beyond 4 SE's from 33 to 21. Notice that the `Beds` variable is no longer statistically significant.
+* After taking the log of `Living_Area`, the residuals are more symmetrically distributed. We may have sacrificed some upper tail normality for the lower tail, since there appear to be more residuals larger than 4 now. However, we have reduced the total number of residuals beyond 4 SE's from 33 to 21. Importantly, the `Beds` variable is no longer statistically significant.
 * Dropping the number of bedrooms has no noticeable effect on the model.
-* Dropping the 19 parcels increases the adjusted $R^2$ to 0.76 and further decreases the number of residuals beyond 4 SE's to 5. Thus, these parcels represented a significant source of error in the model and might be a good point of further investigation.
+* Dropping the 19 parcels increases the adjusted $R^2$ from 0.75 to 0.76 and further decreases the number of residuals beyond 4 SE's to 5. Thus, these parcels represented a significant source of error in the model and might be a good point of further investigation. The diagnostic plots for this model are printed below.
 
 ```{r models2, fig.width = 6, fig.height = 6}
 # Take log of living area
 m2 <- lm(log(Price) ~ sqrt(Violence) + log(Living_Area) + Year + 
            Bed + Bath + Condition, 
          data = X)
-summary(m2)
-par(mfrow = c(2, 2))
-plot(m2)
+# summary(m2)
+# plot(m2)
 
 # Drop number of bedrooms
 m3 <- lm(log(Price) ~ sqrt(Violence) + log(Living_Area) + Year + 
            Bath + Condition, 
          data = X)
-summary(m3)
-plot(m3)
+# summary(m3)
+# plot(m3)
 
 # Drop the 19 outlier parcels
 XO <- X[!X$OBJECTID %in% o$OBJECTID, ]
@@ -570,15 +573,16 @@ m4 <- lm(log(Price) ~ sqrt(Violence) + log(Living_Area) + Year +
            Bath + Condition, 
          data = XO)
 summary(m4)
+par(mfrow = c(2, 2))
 plot(m4)
 
-# Compare residuals beyond 4 SE's
-r1 <- residuals(m1) / summary(m1)$sigma
-sum(r1 < -4 | r1 > 4)
-r3 <- residuals(m3) / summary(m3)$sigma
-sum(r3 < -4 | r3 > 4)
-r4 <- residuals(m4) / summary(m4)$sigma
-sum(r4 < -4 | r4 > 4)
+# # Compare residuals beyond 4 SE's
+# r1 <- residuals(m1) / summary(m1)$sigma
+# sum(r1 < -4 | r1 > 4)
+# r3 <- residuals(m3) / summary(m3)$sigma
+# sum(r3 < -4 | r3 > 4)
+# r4 <- residuals(m4) / summary(m4)$sigma
+# sum(r4 < -4 | r4 > 4)
 ```
 
 ### 2. Crime KDE
@@ -593,7 +597,7 @@ $$
 m5 <- lm(log(Price) ~ sqrt(Violence_KDE) + log(Living_Area) + Year + 
            Bath + Condition, 
          data = XO)
-summary(m5)
+# summary(m5)
 ```
 
 
